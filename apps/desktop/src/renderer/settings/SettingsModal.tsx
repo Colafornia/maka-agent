@@ -25,6 +25,7 @@ import type {
   NetworkProxySettings,
   SettingsSection,
   SettingsTestResult,
+  ThemePreference,
   UsageRange,
   UsageStats,
 } from '@maka/core';
@@ -37,24 +38,101 @@ type SettingsNavItem = {
   label: string;
   Icon: ComponentType<LucideProps>;
   enabled: boolean;
+  comingSoon?: boolean;
 };
 
 const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'general', label: '通用', Icon: SettingsIcon, enabled: true },
-  { id: 'personalization', label: '个性化', Icon: User, enabled: true },
+  { id: 'personalization', label: '个性化', Icon: User, enabled: true, comingSoon: true },
   { id: 'theme', label: '主题', Icon: Palette, enabled: true },
-  { id: 'daily-review', label: '每日回顾', Icon: CalendarDays, enabled: true },
+  { id: 'daily-review', label: '每日回顾', Icon: CalendarDays, enabled: true, comingSoon: true },
   { id: 'models', label: '模型', Icon: Cpu, enabled: true },
   { id: 'usage', label: '使用统计', Icon: BarChart3, enabled: true },
-  { id: 'voice-models', label: '语音模型', Icon: Volume2, enabled: true },
-  { id: 'open-gateway', label: '开放网关', Icon: Sparkles, enabled: true },
+  { id: 'voice-models', label: '语音模型', Icon: Volume2, enabled: true, comingSoon: true },
+  { id: 'open-gateway', label: '开放网关', Icon: Sparkles, enabled: true, comingSoon: true },
   { id: 'bot-chat', label: '机器人对话', Icon: Bot, enabled: true },
-  { id: 'search', label: '搜索服务', Icon: Search, enabled: true },
+  { id: 'search', label: '搜索服务', Icon: Search, enabled: true, comingSoon: true },
   { id: 'network', label: '网络', Icon: Globe, enabled: true },
-  { id: 'data', label: '数据', Icon: Database, enabled: true },
+  { id: 'data', label: '数据', Icon: Database, enabled: true, comingSoon: true },
   { id: 'account', label: '账号', Icon: UserCircle, enabled: true },
   { id: 'about', label: '关于', Icon: Info, enabled: true },
 ];
+
+type ComingSoonCopy = {
+  Icon: ComponentType<LucideProps>;
+  headline: string;
+  description: string;
+  bullets: string[];
+};
+
+const COMING_SOON_PAGES: Partial<Record<SettingsSection, ComingSoonCopy>> = {
+  personalization: {
+    Icon: User,
+    headline: '即将推出 · 个性化',
+    description:
+      '为每一台机器配置自己的助手语气、首选语言、默认 system prompt 和习惯化偏好。会在 V0.2 阶段连同记忆系统一起开放。',
+    bullets: [
+      '自定义助手语气：「严谨」「随意」「师生」「同事」等预设 + 自定义指令',
+      '界面语言独立于系统语言（中/英/日/韩）',
+      '记忆条目导入导出 + 跨设备同步',
+    ],
+  },
+  'daily-review': {
+    Icon: CalendarDays,
+    headline: '即将推出 · 每日回顾',
+    description:
+      '自动汇总当天的对话、任务和工具调用，生成一份精炼的 daily brief；也可设置每周 / 每月节奏。',
+    bullets: [
+      '按时段或对话主题聚类，凸显高价值进展',
+      '可导出为 Markdown、PDF 或推送至 Telegram / 飞书',
+      '与「使用统计」共享 token 与费用数据',
+    ],
+  },
+  'voice-models': {
+    Icon: Volume2,
+    headline: '即将推出 · 语音模型',
+    description:
+      '为 Maka 接入本地或云端的 TTS / STT，让对话可以语音输入和回放。',
+    bullets: [
+      '本地 TTS：piper / coqui，零网络延迟',
+      '云端 STT：Whisper / GPT-4o Realtime / Gemini Live',
+      '按 connection 单独切换语音模型，免影响文本',
+    ],
+  },
+  'open-gateway': {
+    Icon: Sparkles,
+    headline: '即将推出 · 开放网关',
+    description:
+      '把 Maka 当作本机的 OpenAI 兼容 API 暴露给其他工具（IDE / shell / 工作流引擎），统一走 Maka 的权限策略和使用统计。',
+    bullets: [
+      '本机 :3939 暴露 OpenAI / Anthropic 兼容端点',
+      '调用走当前默认 provider，复用凭据与代理设置',
+      '所有调用进入「使用统计」聚合，方便对账',
+    ],
+  },
+  search: {
+    Icon: Search,
+    headline: '即将推出 · 搜索服务',
+    description:
+      '为助手挂接外部搜索能力，自动按提问类型选择源；配合权限策略可控制每条搜索的范围与速率。',
+    bullets: [
+      '主流引擎：Tavily / Brave Search / SerpAPI',
+      '自托管选项：SearxNG、MetaSo、本地索引',
+      '查询缓存与隐私模式（含网络代理路由）',
+    ],
+  },
+  data: {
+    Icon: Database,
+    headline: '即将推出 · 数据',
+    description:
+      '统一管理工作区数据：会话归档、设置备份、凭据导入导出，全部留在本机。',
+    bullets: [
+      '导出整个 workspace（sessions + settings + skills）为 .maka.zip',
+      '导入备份时按 schemaVersion 升级，缺字段补默认',
+      '清理旧会话与流式中断残留',
+    ],
+  },
+};
 
 const BOT_LABELS: Record<BotProvider, { label: string; help: string }> = {
   telegram: { label: 'Telegram', help: '通过 BotFather 创建 Bot 并获取 Token' },
@@ -71,6 +149,8 @@ export function SettingsModal(props: {
   defaultSlug: string | null;
   onRefresh(): Promise<void>;
   onClose(): void;
+  themePref: ThemePreference;
+  onThemeChange(pref: ThemePreference): void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   // Escape closes the modal, Tab/Shift+Tab cycles inside the dialog,
@@ -92,6 +172,8 @@ export function SettingsModal(props: {
           defaultSlug={props.defaultSlug}
           onRefresh={props.onRefresh}
           onClose={props.onClose}
+          themePref={props.themePref}
+          onThemeChange={props.onThemeChange}
         />
       </div>
     </div>
@@ -103,6 +185,8 @@ function SettingsSurface(props: {
   defaultSlug: string | null;
   onRefresh(): Promise<void>;
   onClose(): void;
+  themePref: ThemePreference;
+  onThemeChange(pref: ThemePreference): void;
 }) {
   const [section, setSection] = useState<SettingsSection>('models');
   const [settings, setSettings] = useState<AppSettings>(() => createDefaultSettings());
@@ -155,6 +239,7 @@ function SettingsSurface(props: {
                 <item.Icon size={16} strokeWidth={1.5} />
               </span>
               <strong>{item.label}</strong>
+              {item.comingSoon && <em className="settingsNavBadge" aria-label="即将推出">Soon</em>}
             </button>
           ))}
         </nav>
@@ -170,7 +255,7 @@ function SettingsSurface(props: {
 
         <div className="settingsPageContent">
           {loading ? (
-            <div className="settingsEmptyState" aria-busy="true">Loading…</div>
+            <SettingsSkeleton />
           ) : (
             <SettingsPage
               section={section}
@@ -178,9 +263,11 @@ function SettingsSurface(props: {
               usageStats={usageStats}
               connections={props.connections}
               defaultSlug={props.defaultSlug}
+              themePref={props.themePref}
               onRefreshConnections={props.onRefresh}
               onUpdateSettings={updateSettings}
               onReloadUsage={reloadUsage}
+              onThemeChange={props.onThemeChange}
             />
           )}
         </div>
@@ -197,9 +284,11 @@ function SettingsPage(props: {
   usageStats: UsageStats | null;
   connections: LlmConnection[];
   defaultSlug: string | null;
+  themePref: ThemePreference;
   onRefreshConnections(): Promise<void>;
   onUpdateSettings(patch: Parameters<typeof window.maka.settings.update>[0]): Promise<AppSettings>;
   onReloadUsage(range?: UsageRange): Promise<void>;
+  onThemeChange(pref: ThemePreference): void;
 }) {
   switch (props.section) {
     case 'models':
@@ -226,13 +315,7 @@ function SettingsPage(props: {
     case 'network':
       return <NetworkSettingsPage settings={props.settings} onUpdate={props.onUpdateSettings} />;
     case 'about':
-      return (
-        <SettingsRows>
-          <SettingRow title="版本" detail="Local development build." value="0.1.0" />
-          <SettingRow title="Runtime" detail="Electron desktop with React renderer." value="Electron 39" />
-          <SettingRow title="存储" detail="JSONL sessions、settings.json 和 encrypted provider credentials." value="Local" />
-        </SettingsRows>
-      );
+      return <AboutSettingsPage />;
     case 'general':
       return (
         <SettingsRows>
@@ -243,10 +326,11 @@ function SettingsPage(props: {
       );
     case 'theme':
       return (
-        <SettingsRows>
-          <SettingRow title="主题" detail="当前使用浅色桌面主题。" value="Light" />
-          <SettingRow title="布局密度" detail="紧凑桌面间距。" value="Compact" />
-        </SettingsRows>
+        <ThemeSettingsPage
+          themePref={props.themePref}
+          onUpdate={props.onUpdateSettings}
+          onThemeChange={props.onThemeChange}
+        />
       );
     case 'account':
       return (
@@ -255,13 +339,152 @@ function SettingsPage(props: {
           <SettingRow title="凭据保护" detail="API key 使用系统 safeStorage 加密。" value="Enabled" />
         </SettingsRows>
       );
-    default:
+    default: {
+      const copy = COMING_SOON_PAGES[props.section];
+      if (copy) {
+        return <ComingSoonPage copy={copy} />;
+      }
       return (
         <SettingsRows>
           <SettingRow title={navLabel(props.section)} detail="该设置页已纳入 Maka 设置树，会随对应 runtime 能力一起工作。" value="Ready" />
         </SettingsRows>
       );
+    }
   }
+}
+
+type AppInfo = Awaited<ReturnType<typeof window.maka.app.info>>;
+
+const PLATFORM_LABEL: Record<string, string> = {
+  darwin: 'macOS',
+  win32: 'Windows',
+  linux: 'Linux',
+};
+
+function AboutSettingsPage() {
+  const [info, setInfo] = useState<AppInfo | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.maka.app
+      .info()
+      .then((next) => {
+        if (!cancelled) setInfo(next);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!info) {
+    return (
+      <div className="maka-skeleton-stack" aria-busy="true" aria-label="Loading about page">
+        <div className="maka-skeleton maka-skeleton-line" data-size="lg" style={{ width: '38%' }} />
+        <div className="maka-skeleton maka-skeleton-line" style={{ width: '70%' }} />
+        <div className="maka-skeleton maka-skeleton-line" style={{ width: '52%' }} />
+      </div>
+    );
+  }
+
+  const platformPretty = PLATFORM_LABEL[info.platform] ?? info.platform;
+  const platformLine = `${platformPretty} ${info.osRelease} · ${info.arch}`;
+  return (
+    <SettingsRows>
+      <SettingRow title="Maka 版本" detail="Local development build." value={`v${info.appVersion}`} />
+      <SettingRow title="运行时" detail="Renderer + Electron + Node 三层版本号一并显示。" value={`Electron ${info.electronVersion} · Node ${info.nodeVersion} · Chrome ${info.chromeVersion}`} />
+      <SettingRow title="平台" detail="操作系统、版本和 CPU 架构。" value={platformLine} />
+      <SettingRow title="工作区" detail="会话、设置、credential 全部留在本地这条路径下。" value={info.workspacePath} />
+      <SettingRow title="存储" detail="JSONL sessions、settings.json、encrypted provider credentials。" value="Local" />
+    </SettingsRows>
+  );
+}
+
+function SettingsSkeleton() {
+  return (
+    <div className="settingsLoadingSkeleton" aria-busy="true" aria-label="Loading settings">
+      <div className="maka-skeleton-stack">
+        <div className="maka-skeleton maka-skeleton-line" data-size="lg" style={{ width: '38%' }} />
+        <div className="maka-skeleton maka-skeleton-card" />
+        <div className="maka-skeleton maka-skeleton-line" data-size="sm" style={{ width: '60%' }} />
+        <div className="maka-skeleton maka-skeleton-line" style={{ width: '85%' }} />
+        <div className="maka-skeleton maka-skeleton-line" style={{ width: '72%' }} />
+        <div className="maka-skeleton maka-skeleton-line" style={{ width: '48%' }} />
+      </div>
+    </div>
+  );
+}
+
+function ComingSoonPage(props: { copy: ComingSoonCopy }) {
+  const { Icon, headline, description, bullets } = props.copy;
+  return (
+    <section className="settingsComingSoonPage" aria-label={headline}>
+      <div className="settingsComingSoonHero">
+        <span className="settingsComingSoonIcon" aria-hidden="true">
+          <Icon size={28} strokeWidth={1.5} />
+        </span>
+        <div>
+          <h3>{headline}</h3>
+          <p>{description}</p>
+        </div>
+      </div>
+      <ul className="settingsComingSoonList">
+        {bullets.map((bullet) => (
+          <li key={bullet}>{bullet}</li>
+        ))}
+      </ul>
+      <p className="settingsHelpText">
+        这些能力会随 Maka V0.2 路线推进逐步开放；想优先看到哪条，请在 issue tracker 提一下偏好。
+      </p>
+    </section>
+  );
+}
+
+const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; help: string }> = [
+  { value: 'light', label: '浅色', help: '始终使用浅色界面。' },
+  { value: 'dark', label: '深色', help: '始终使用深色界面。' },
+  { value: 'auto', label: '跟随系统', help: '匹配 macOS 的当前 Light/Dark 偏好。' },
+];
+
+function ThemeSettingsPage(props: {
+  themePref: ThemePreference;
+  onUpdate(patch: Parameters<typeof window.maka.settings.update>[0]): Promise<AppSettings>;
+  onThemeChange(pref: ThemePreference): void;
+}) {
+  async function setTheme(next: ThemePreference) {
+    // Apply immediately for instant feedback, then persist. If persistence
+    // fails the visual stays — the next app start will re-read whatever
+    // landed on disk.
+    props.onThemeChange(next);
+    await props.onUpdate({ appearance: { theme: next } });
+  }
+
+  return (
+    <div className="settingsStructuredPage">
+      <div className="settingsThemeOptions" role="radiogroup" aria-label="主题">
+        {THEME_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={props.themePref === option.value}
+            data-active={props.themePref === option.value}
+            className="settingsThemeOption"
+            onClick={() => void setTheme(option.value)}
+          >
+            <span className="settingsThemeSwatch" data-variant={option.value} aria-hidden="true" />
+            <span className="settingsThemeLabel">
+              <strong>{option.label}</strong>
+              <small>{option.help}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="settingsHelpText">
+        切换主题会立即生效，并保存在 <code className="maka-empty-state-code">settings.json</code> 里下次启动延续。
+      </p>
+    </div>
+  );
 }
 
 function NetworkSettingsPage(props: {

@@ -638,6 +638,56 @@ button:active {
   min-height: 0;
 }
 
+/* Wraps the scroll surface so the jump-to-bottom button can be absolutely
+   positioned over the chat without escaping the column. */
+.maka-chat-shell {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.maka-chat-jump-bottom {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--background);
+  color: var(--foreground-70);
+  cursor: pointer;
+  box-shadow: var(--shadow-medium);
+  opacity: 1;
+  transition:
+    transform 180ms var(--ease-out-strong),
+    opacity 180ms ease-out,
+    background 120ms ease;
+}
+
+.maka-chat-jump-bottom:hover {
+  color: var(--foreground);
+  background: var(--foreground-3);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.maka-chat-jump-bottom:active {
+  transform: translateX(-50%) scale(0.97);
+}
+
+@starting-style {
+  .maka-chat-jump-bottom {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+}
+
 .emptyChat {
   width: min(760px, 100%);
   margin: auto;
@@ -712,6 +762,7 @@ button:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 8px;
   color: var(--foreground-50);
   font-size: 12px;
 }
@@ -721,20 +772,8 @@ button:active {
   box-shadow: var(--shadow-minimal-flat);
 }
 
-.toolItem header {
-  justify-content: space-between;
-}
-
-.toolItem p {
-  margin: 6px 0 0;
-  color: var(--foreground-60);
-  font-family: var(--font-default);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .toolArgs {
-  margin-top: 8px;
+  margin: 0;
   max-height: 132px;
   overflow: auto;
 }
@@ -764,9 +803,13 @@ button:active {
 }
 
 .composer textarea {
-  height: 64px;
-  min-height: 64px;
-  max-height: 132px;
+  /* Auto-resizing textarea: starts at min-height for a single line, grows up
+     to max-height as the user adds lines, then scrolls internally. The JS
+     side caps at 240px (see `COMPOSER_MAX_HEIGHT` in @maka/ui). */
+  min-height: var(--h-composer-min, 56px);
+  max-height: 240px;
+  resize: none;
+  overflow-y: auto;
 }
 
 .composerActions > div {
@@ -970,6 +1013,103 @@ button:active {
   font-weight: 600;
 }
 
+.settingsNavItem {
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+}
+
+.settingsNavBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: oklch(from var(--info) l c h / 0.14);
+  color: var(--info-text);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.settingsComingSoonPage {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+
+.settingsComingSoonHero {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--foreground-3);
+}
+
+.settingsComingSoonIcon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: oklch(from var(--accent) l c h / 0.08);
+  color: var(--accent);
+}
+
+.settingsComingSoonHero h3 {
+  margin: 0 0 6px;
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.settingsComingSoonHero p {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--foreground-70);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.settingsComingSoonList {
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--foreground-70);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.settingsComingSoonList li::marker {
+  color: var(--foreground-40);
+}
+
+.settingsLoadingSkeleton {
+  padding: 8px 0;
+  max-width: 540px;
+}
+
+.providersLoading {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 8px 4px;
+}
+
+.providersLoadingStrip {
+  display: grid;
+  gap: 8px;
+}
+
+.providersLoadingGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(198px, 1fr));
+  gap: 10px;
+}
+
 .settingsMainPane {
   position: relative;
   min-width: 0;
@@ -1151,6 +1291,83 @@ button:active {
 
 .settingsInlineResult[data-ok="false"] {
   color: var(--destructive-text);
+}
+
+.settingsThemeOptions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settingsThemeOption {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--background-elevated);
+  color: var(--foreground);
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.settingsThemeOption:hover {
+  border-color: oklch(from var(--accent) l c h / 0.22);
+  background: var(--foreground-3);
+}
+
+.settingsThemeOption[data-active="true"] {
+  border-color: oklch(from var(--accent) l c h / 0.45);
+  background: oklch(from var(--accent) l c h / 0.06);
+}
+
+.settingsThemeSwatch {
+  width: 56px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, oklch(0.98 0.003 265) 0%, oklch(0.94 0.005 90) 100%);
+  box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.4);
+}
+
+.settingsThemeSwatch[data-variant="dark"] {
+  background: linear-gradient(180deg, oklch(0.20 0.005 270) 0%, oklch(0.14 0.005 270) 100%);
+  box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.6);
+}
+
+.settingsThemeSwatch[data-variant="auto"] {
+  background: linear-gradient(
+    135deg,
+    oklch(0.98 0.003 265) 0%,
+    oklch(0.98 0.003 265) 49%,
+    oklch(0.14 0.005 270) 51%,
+    oklch(0.14 0.005 270) 100%
+  );
+}
+
+.settingsThemeLabel {
+  display: grid;
+  gap: 4px;
+}
+
+.settingsThemeLabel strong {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settingsThemeLabel small {
+  color: var(--foreground-60);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+@media (max-width: 820px) {
+  .settingsThemeOptions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .settingsBotLayout {

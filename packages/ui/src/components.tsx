@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
+import { memo, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
 import {
   Archive,
+  ArrowDown,
   Flag,
   MessageSquare,
   Plus,
@@ -9,6 +10,9 @@ import {
   Sparkles,
   SquarePen,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import type {
   PermissionRequestEvent,
   PermissionResponse,
@@ -247,6 +251,8 @@ export function SessionListPanel(props: {
   );
 }
 
+const SCROLL_BOTTOM_THRESHOLD = 64; // px
+
 export function ChatView(props: {
   messages: StoredMessage[];
   streamingText: string;
@@ -258,6 +264,30 @@ export function ChatView(props: {
   const chat = materializeChat(props.messages);
   const storedTools = materializeTools(props.messages);
   const tools = mergeTools(storedTools, props.tools);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [pinnedToBottom, setPinnedToBottom] = useState(true);
+
+  // Auto-scroll on new content if the user is already at (or near) the
+  // bottom. If they've scrolled up to read history we don't yank them back.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !pinnedToBottom) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chat.length, props.streamingText, tools.length, pinnedToBottom]);
+
+  function onScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setPinnedToBottom(distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD);
+  }
+
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    setPinnedToBottom(true);
+  }
 
   if (props.mode === 'skills') {
     return (
@@ -299,29 +329,93 @@ export function ChatView(props: {
         <span className="maka-chat-header-spacer" />
         <span className="modePill">Ask mode</span>
       </header>
-      <div className="maka-chat messages">
-        {chat.length === 0 && !props.streamingText && (
-          <div className="emptyChat compact">
-            <span className="eyebrow">Maka</span>
-            <h1>What should we work on?</h1>
-            <p>Describe the change, question, or investigation.</p>
-          </div>
+      <div className="maka-chat-shell">
+        <div ref={scrollRef} className="maka-chat messages" onScroll={onScroll}>
+          {chat.length === 0 && !props.streamingText && (
+            <div className="emptyChat compact">
+              <span className="eyebrow">Maka</span>
+              <h1>What should we work on?</h1>
+              <p>Describe the change, question, or investigation.</p>
+            </div>
+          )}
+          {chat.map((item) => (
+            <article key={item.id} className={`maka-message-row message ${item.role}`}>
+              <span>{item.role}</span>
+              <MessageBody role={item.role} text={item.text} />
+            </article>
+          ))}
+          {props.streamingText && (
+            <article className="maka-message-row message assistant streaming">
+              <span>assistant</span>
+              <div className="maka-bubble-assistant maka-bubble-streaming">
+                <Markdown text={props.streamingText} />
+              </div>
+            </article>
+          )}
+          {tools.length > 0 && <ToolActivity items={tools} />}
+        </div>
+        {!pinnedToBottom && (
+          <button
+            type="button"
+            className="maka-chat-jump-bottom"
+            onClick={scrollToBottom}
+            aria-label="Jump to latest message"
+          >
+            <ArrowDown size={16} strokeWidth={2} aria-hidden="true" />
+          </button>
         )}
-        {chat.map((item) => (
-          <article key={item.id} className={`maka-message-row message ${item.role}`}>
-            <span>{item.role}</span>
-            <pre className={item.role === 'user' ? 'maka-bubble-user' : 'maka-bubble-assistant'}>{item.text}</pre>
-          </article>
-        ))}
-        {props.streamingText && (
-          <article className="maka-message-row message assistant streaming">
-            <span>assistant</span>
-            <pre className="maka-bubble-assistant maka-bubble-streaming">{props.streamingText}</pre>
-          </article>
-        )}
-        {tools.length > 0 && <ToolActivity items={tools} />}
       </div>
     </main>
+  );
+}
+
+/**
+ * Renders an individual chat message body.
+ *
+ * - `user` messages stay verbatim (whitespace + line breaks preserved); the
+ *   user's literal input shouldn't be reinterpreted as markdown.
+ * - `assistant` / `system` (and anything else) flow through the markdown
+ *   renderer so code fences, lists, tables, and links display natively.
+ *
+ * Memoized because chat scroll re-renders the whole list on every streaming
+ * delta; this keeps already-final bubbles from re-parsing markdown.
+ */
+const MessageBody = memo(function MessageBody(props: { role: string; text: string }) {
+  if (props.role === 'user') {
+    return <div className="maka-bubble-user">{props.text}</div>;
+  }
+  return (
+    <div className="maka-bubble-assistant">
+      <Markdown text={props.text} />
+    </div>
+  );
+});
+
+const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
+
+function Markdown(props: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={MARKDOWN_PLUGINS}
+      components={{
+        // Force external links to open in a new window — Electron will route
+        // through the OS default browser when the renderer is configured to.
+        a: ({ children, href, ...rest }) => (
+          <a {...rest} href={href} target="_blank" rel="noreferrer noopener">
+            {children}
+          </a>
+        ),
+        // Inline `code` keeps the bubble's foreground color; only block code
+        // gets the framed treatment via `pre > code` in CSS.
+        code: ({ children, className, ...rest }) => (
+          <code {...rest} className={className}>
+            {children}
+          </code>
+        ),
+      }}
+    >
+      {props.text}
+    </ReactMarkdown>
   );
 }
 
@@ -335,10 +429,23 @@ function ChatTab(props: { title: string; backend: string }) {
   );
 }
 
+const COMPOSER_MAX_HEIGHT = 240;
+
 export function Composer(props: { disabled?: boolean; hidden?: boolean; onSend(text: string): void; onStop(): void }) {
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   if (props.hidden) return null;
+
+  function autoResize() {
+    const el = textareaRef.current;
+    if (!el) return;
+    // Standard "reset to auto, then set to scrollHeight" trick so the
+    // textarea can both grow and shrink as the user edits. Cap at
+    // COMPOSER_MAX_HEIGHT so it never pushes the chat surface off-screen;
+    // overflow becomes an internal scroll past that.
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  }
 
   function sendCurrent() {
     if (props.disabled) return;
@@ -348,6 +455,12 @@ export function Composer(props: { disabled?: boolean; hidden?: boolean; onSend(t
     if (!text) return;
     props.onSend(text);
     form?.reset();
+    // form.reset() empties the textarea but doesn't fire input — collapse
+    // manually so the composer snaps back to its single-row footprint.
+    if (textarea) {
+      textarea.style.height = '';
+      autoResize();
+    }
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -373,6 +486,8 @@ export function Composer(props: { disabled?: boolean; hidden?: boolean; onSend(t
           placeholder="Message Maka…"
           disabled={props.disabled}
           onKeyDown={onTextareaKeyDown}
+          onInput={autoResize}
+          rows={1}
           autoComplete="off"
           spellCheck={false}
         />
@@ -388,26 +503,64 @@ export function Composer(props: { disabled?: boolean; hidden?: boolean; onSend(t
   );
 }
 
+const STATUS_LABEL: Record<ToolActivityItem['status'], string> = {
+  pending: 'Queued',
+  waiting_permission: 'Waiting for permission',
+  running: 'Running',
+  completed: 'Done',
+  errored: 'Errored',
+  interrupted: 'Interrupted',
+};
+
+function isOpenByDefault(status: ToolActivityItem['status']): boolean {
+  // Show details inline while the call is in flight or blocking the user;
+  // collapse once it has settled so completed history doesn't drown the chat.
+  return status === 'pending' || status === 'waiting_permission' || status === 'running';
+}
+
+function formatDuration(ms: number | undefined): string | null {
+  if (ms === undefined || ms < 0) return null;
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
 export function ToolActivity(props: { items: ToolActivityItem[] }) {
   return (
-    <section className="toolInline">
+    <section className="toolInline" aria-label="Tool activity">
       <header>
         <strong>Activity</strong>
-        <small>{props.items.length}</small>
+        <span className="maka-tool-count" aria-label={`${props.items.length} calls`}>{props.items.length}</span>
       </header>
-      {props.items.map((item) => (
-        <div key={item.toolUseId} className="maka-tool toolItem" data-status={item.status}>
-          <header className="maka-tool-header">
-            <span className="maka-tool-name">
-              {item.displayName ?? item.toolName}
-            </span>
-            <small>{item.status.replace('_', ' ')}</small>
-          </header>
-          {item.intent && <p>{item.intent}</p>}
-          <pre className="maka-code toolArgs">{JSON.stringify(item.args, null, 2)}</pre>
-          {item.result && <OverlayPreview content={item.result} />}
-        </div>
-      ))}
+      {props.items.map((item) => {
+        const duration = formatDuration(item.durationMs);
+        return (
+          <details
+            key={item.toolUseId}
+            className="maka-tool toolItem"
+            data-status={item.status}
+            open={isOpenByDefault(item.status)}
+          >
+            <summary className="maka-tool-header">
+              <span className="maka-tool-status-dot" data-status={item.status} aria-hidden="true" />
+              <span className="maka-tool-name">{item.displayName ?? item.toolName}</span>
+              <span className="maka-tool-meta">
+                {duration && <span className="maka-tool-duration">{duration}</span>}
+                <span className="maka-tool-status-label">{STATUS_LABEL[item.status]}</span>
+              </span>
+            </summary>
+            <div className="maka-tool-body">
+              {item.intent && <p className="maka-tool-intent">{item.intent}</p>}
+              {item.args !== undefined && (
+                <pre className="maka-code toolArgs">{JSON.stringify(item.args, null, 2)}</pre>
+              )}
+              {item.result && <OverlayPreview content={item.result} />}
+            </div>
+          </details>
+        );
+      })}
     </section>
   );
 }
