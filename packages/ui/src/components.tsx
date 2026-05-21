@@ -755,7 +755,7 @@ export function ChatView(props: {
           <PermissionModeSwitcher mode="ask" disabled disabledReason="新建对话后再切换模式。" />
         </header>
         <div className="maka-chat messages">
-          {props.emptyOverride ?? <EmptyChatHero onPromptSuggestion={props.onPromptSuggestion} />}
+          {props.emptyOverride ?? <EmptyChatHero onPromptSuggestion={props.onPromptSuggestion} userLabel={props.userLabel} />}
         </div>
       </main>
     );
@@ -797,7 +797,7 @@ export function ChatView(props: {
       <div className="maka-chat-shell">
         <div ref={scrollRef} className="maka-chat messages" onScroll={onScroll}>
           {chat.length === 0 && !props.streamingText && (
-            props.emptyOverride ?? <EmptyChatHero onPromptSuggestion={props.onPromptSuggestion} />
+            props.emptyOverride ?? <EmptyChatHero onPromptSuggestion={props.onPromptSuggestion} userLabel={props.userLabel} />
           )}
           {chat.map((item) => (
             <article
@@ -982,12 +982,19 @@ function collectCodeText(children: ReactNode): string {
   return '';
 }
 
-function EmptyChatHero(props: { onPromptSuggestion?(prompt: string): void }) {
+function EmptyChatHero(props: { onPromptSuggestion?(prompt: string): void; userLabel?: string }) {
+  // Greet the user by name when they've set one in Personalization Settings.
+  // Falls back to a neutral title so first-run users don't see "Hi 你, …".
+  const label = props.userLabel?.trim();
   return (
     <div className="emptyChat compact">
       <span className="eyebrow">Maka</span>
-      <h1>What should we work on?</h1>
-      <p>Describe the change, question, or investigation — or pick a starting point below.</p>
+      <h1>
+        {label
+          ? `${label}，今天想一起做点什么？`
+          : '想一起做点什么？'}
+      </h1>
+      <p>说一下你要改的、想问的、想查的；下面是几个常用起点。</p>
       {props.onPromptSuggestion && (
         <ul className="maka-prompt-suggestions" aria-label="Prompt suggestions">
           {PROMPT_SUGGESTIONS.map((suggestion) => (
@@ -1146,7 +1153,18 @@ export interface ComposerHandle {
 
 export const Composer = forwardRef<
   ComposerHandle,
-  { disabled?: boolean; hidden?: boolean; onSend(text: string): boolean | void | Promise<boolean | void>; onStop(): void }
+  {
+    disabled?: boolean;
+    hidden?: boolean;
+    /**
+     * When true, the assistant is currently streaming a response.
+     * Toolbar swaps to a "Maka 正在思考…" hint and the Stop button is
+     * the only visible action — Send is hidden because the model is busy.
+     */
+    streaming?: boolean;
+    onSend(text: string): boolean | void | Promise<boolean | void>;
+    onStop(): void;
+  }
 >(function Composer(props, ref) {
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1207,6 +1225,14 @@ export const Composer = forwardRef<
   function onTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     // Skip when an IME composition is active so CJK input isn't interrupted.
     if (event.nativeEvent.isComposing || event.key === 'Process') return;
+    // Esc during streaming interrupts the model. We don't preventDefault
+    // unconditionally so Esc still works to close modals when the composer
+    // happens to be focused outside a streaming turn.
+    if (event.key === 'Escape' && props.streaming) {
+      event.preventDefault();
+      props.onStop();
+      return;
+    }
     if (event.key !== 'Enter') return;
     if (event.shiftKey || event.altKey) return; // Shift+Enter / Alt+Enter inserts a newline.
     event.preventDefault();
@@ -1229,11 +1255,29 @@ export const Composer = forwardRef<
           autoComplete="off"
           spellCheck={false}
         />
-        <div className="maka-composer-toolbar composerActions">
-          <span>{props.disabled ? 'Waiting for permission' : (<>Press <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline</>)}</span>
+        <div className="maka-composer-toolbar composerActions" data-streaming={props.streaming ? 'true' : undefined}>
+          <span>
+            {props.disabled ? (
+              'Waiting for permission'
+            ) : props.streaming ? (
+              <span className="maka-composer-streaming-hint">
+                <span className="maka-composer-streaming-dot" aria-hidden="true" />
+                Maka 正在思考… <kbd>Esc</kbd> 或点 Stop 中断
+              </span>
+            ) : (
+              <>Press <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline</>
+            )}
+          </span>
           <div>
-            <button className="maka-button" type="button" onClick={props.onStop}>Stop</button>
-            <button className="maka-button" data-variant="primary" type="submit" disabled={props.disabled}>Send</button>
+            {props.streaming ? (
+              <button className="maka-button" data-variant="primary" type="button" onClick={props.onStop}>
+                Stop
+              </button>
+            ) : (
+              <button className="maka-button" data-variant="primary" type="submit" disabled={props.disabled}>
+                Send
+              </button>
+            )}
           </div>
         </div>
       </div>
