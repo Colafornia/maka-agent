@@ -482,7 +482,7 @@ function SettingsSurface(props: {
                       <item.Icon size={16} strokeWidth={1.5} />
                     </span>
                     <strong>{item.label}</strong>
-                    {item.comingSoon && <em className="settingsNavBadge" aria-label="即将推出">Soon</em>}
+                    {item.comingSoon && <em className="settingsNavBadge" aria-label="路线图（尚未实现）">Roadmap</em>}
                   </button>
                 ))}
               </div>
@@ -751,6 +751,22 @@ function ComingSoonPage(props: { copy: ComingSoonCopy }) {
   const { Icon, headline, badge, description, status, willInclude, willNotDo, nextConfig } = props.copy;
   return (
     <section className="settingsComingSoonPage" aria-label={headline}>
+      {/* PR-UI-LAYOUT-17 (@yuejing 2026-05-22, per @kenji audit recommendation):
+       * make the "not yet implemented" state honest at first glance instead
+       * of leaning on the "Soon" nav badge alone. The roadmap banner gives
+       * users an immediate signal that this page is *describing* a planned
+       * surface, not configuring a working one. */}
+      <div className="settingsComingSoonBanner" role="status">
+        <span className="settingsComingSoonBannerDot" aria-hidden="true" />
+        <strong>路线图项</strong>
+        {/* PR-UI-LAYOUT-17 + @kenji review (#my-ai:9a8fb603 msg fb7fe5af):
+         * banner copy stays explicit about the unimplemented state and
+         * avoids operational verbs (启用 / connected / toggle / etc.)
+         * to prevent users from reading this page as a working
+         * surface. The page below describes capability, boundary, and
+         * the future configuration flow only. */}
+        <span>该功能尚未实现；下面是当前 contract、边界与未来的配置流程预览。</span>
+      </div>
       <div className="settingsComingSoonHero">
         <span className="settingsComingSoonIcon" aria-hidden="true">
           <Icon size={28} strokeWidth={1.5} />
@@ -784,7 +800,7 @@ function ComingSoonPage(props: { copy: ComingSoonCopy }) {
         </ul>
       </ComingSoonSection>
 
-      <ComingSoonSection tone="config" title="下一步需要配置什么">
+      <ComingSoonSection tone="config" title="上线后的配置流程">
         <ul className="settingsComingSoonList">
           {nextConfig.map((bullet) => (
             <li key={bullet}>{bullet}</li>
