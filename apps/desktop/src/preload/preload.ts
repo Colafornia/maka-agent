@@ -246,7 +246,7 @@ contextBridge.exposeInMainWorld('maka', {
     isExperimentalEnabled(): Promise<boolean> {
       return ipcRenderer.invoke('claude-subscription:is-experimental-enabled');
     },
-    getAuthUrl(): Promise<AuthorizationUrlPayload> {
+    getAuthUrl(): Promise<AuthorizationUrlPayload | SubscriptionActionResult> {
       return ipcRenderer.invoke('claude-subscription:get-auth-url');
     },
     openAuthUrl(authRequestId: string): Promise<SubscriptionActionResult> {

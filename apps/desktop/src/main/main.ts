@@ -793,6 +793,14 @@ function registerIpc(): void {
     message: 'Claude 订阅功能尚未在此版本启用。',
   };
   ipcMain.handle('claude-subscription:get-auth-url', async () => {
+    // kenji `027c93c0` + xuan `2e5be5a`: when the experimental
+    // flag is off, return the shared `experimental_disabled`
+    // envelope so the renderer sees the same fail-closed shape as
+    // every other handler in this namespace. Settings UI
+    // self-gates via `isExperimentalEnabled` before reaching this;
+    // the envelope path is defense-in-depth for DevTools-triggered
+    // calls. Return type is now a union — renderer code checks the
+    // `ok` discriminator.
     if (!isSubscriptionExperimentalEnabled()) {
       return experimentalDisabledResponse;
     }

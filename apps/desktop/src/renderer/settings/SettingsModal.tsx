@@ -998,7 +998,20 @@ function ClaudeSubscriptionCard() {
   async function startLogin() {
     setPendingAction(true);
     try {
+      // kenji `027c93c0` + xuan `2e5be5a`: getAuthUrl now returns
+      // a union — `AuthorizationUrlPayload` on success, or a
+      // `SubscriptionActionResult` envelope when fail-closed
+      // (e.g. experimental flag flipped off after the card
+      // mounted). Discriminate by checking for the `ok` field; the
+      // envelope variant has it, the success payload does not.
       const payload = await window.maka.claudeSubscription.getAuthUrl();
+      if ('ok' in payload) {
+        // Envelope variant. `ok: true` shouldn't happen for
+        // getAuthUrl (success returns the payload, not an envelope),
+        // so this branch is the failure case in practice.
+        toast.error('登录暂不可用', payload.ok ? '请稍后再试。' : payload.message);
+        return;
+      }
       setAuthRequestId(payload.authRequestId);
       setStateHint(payload.stateHint);
       setPasteValue('');
