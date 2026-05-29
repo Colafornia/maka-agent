@@ -857,7 +857,7 @@ function VoiceModelsSettingsPage() {
       <header className="settingsFeatureStatusBanner" role="status">
         <span className="settingsFeatureStatusBannerDot" aria-hidden="true" />
         <strong>本机录音自检 · 已上线</strong>
-        <span>只做本地权限与采集链路 smoke；不上传音频、不保存样本、不写入记忆。</span>
+        <span>只做本地权限与采集链路自检；不上传音频、不保存样本、不写入记忆。</span>
       </header>
 
       <div className="settingsFeatureStatusHero">
@@ -2055,6 +2055,11 @@ function WebSearchSettingsPage(props: {
     webSearch.enabled,
     tavily.credentialStatus,
   );
+  const queryDisabledReason = webSearchQueryDisabledReason({
+    hasStoredKey,
+    enabled: webSearch.enabled,
+    query: demoQuery,
+  });
   const checkedAtMs = tavily.credentialCheckedAt
     ? Date.parse(tavily.credentialCheckedAt)
     : Number.NaN;
@@ -2155,14 +2160,14 @@ function WebSearchSettingsPage(props: {
         <button
           type="button"
           className="maka-button"
-          disabled={demoRunning || demoQuery.trim().length === 0 || !webSearch.enabled || !hasStoredKey}
+          disabled={demoRunning || queryDisabledReason !== null}
           onClick={() => void runDemo()}
         >
           {demoRunning ? '搜索中…' : '搜索'}
         </button>
-        {!webSearch.enabled && (
+        {!demoRunning && queryDisabledReason && (
           <small style={{ marginLeft: 12, color: 'var(--foreground-50)' }}>
-            先开关启用联网搜索
+            {queryDisabledReason}
           </small>
         )}
       </div>
@@ -2219,6 +2224,13 @@ function WebSearchSettingsPage(props: {
       })()}
     </div>
   );
+}
+
+function webSearchQueryDisabledReason(input: { hasStoredKey: boolean; enabled: boolean; query: string }): string | null {
+  if (!input.hasStoredKey) return '先保存 Tavily API key';
+  if (!input.enabled) return '先启用联网搜索';
+  if (input.query.trim().length === 0) return '输入查询后再搜索';
+  return null;
 }
 
 function presentWebSearchCredentialStatus(
