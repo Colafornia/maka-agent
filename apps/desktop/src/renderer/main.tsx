@@ -86,6 +86,8 @@ import './styles.css';
 
 const NO_REAL_CONNECTION_CODE = 'NO_REAL_CONNECTION';
 const NO_REAL_CONNECTION_REASON_RE = /NO_REAL_CONNECTION:([a-z_]+): /;
+const USER_MESSAGE_VISIBLE_TIMEOUT_MS = 1_200;
+const USER_MESSAGE_VISIBLE_POLL_MS = 40;
 
 interface RendererAppInfo {
   projectPath: string;
@@ -126,6 +128,7 @@ function App() {
 function AppShell() {
   const toastApi = useToast();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const sessionsRef = useRef<SessionSummary[]>([]);
   const [activeId, setActiveIdState] = useState<string | undefined>();
   const [navSelection, setNavSelection] = useState<NavSelection>(() => readNavSelection());
   const [messages, setMessages] = useState<StoredMessage[]>([]);
@@ -632,6 +635,10 @@ function AppShell() {
   }, [activeId]);
 
   useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  useEffect(() => {
     void bootstrapSessions();
     void refreshConnections();
     void window.maka.app.info().then((next) => {
@@ -877,10 +884,24 @@ function AppShell() {
     }
   }, [navSelection]);
 
-  async function refreshSessions() {
-    const next = await window.maka.sessions.list();
-    setSessions(next);
-    return next;
+  async function refreshSessions(): Promise<SessionSummary[]> {
+    try {
+      const next = await window.maka.sessions.list();
+      sessionsRef.current = next;
+      setSessions(next);
+      return next;
+    } catch (error) {
+      toastApi.error('刷新会话列表失败', cleanErrorMessage(error));
+      return sessionsRef.current;
+    }
+  }
+
+  function upsertSessionSummary(session: SessionSummary): void {
+    setSessions((current) => {
+      const next = [session, ...current.filter((entry) => entry.id !== session.id)];
+      sessionsRef.current = next;
+      return next;
+    });
   }
 
   async function bootstrapSessions() {
@@ -1327,18 +1348,24 @@ function AppShell() {
 
   async function send(text: string): Promise<boolean> {
     try {
+      const turnId = crypto.randomUUID();
       if (!activeId) {
         const session = await window.maka.sessions.create({
           permissionMode: 'ask',
           name: text.slice(0, 42) || '新建对话',
         });
+        setNavSelection({ section: 'sessions', filter: 'chats' });
         setActiveId(session.id);
+        upsertSessionSummary(session);
+        setMessages([]);
+        await window.maka.sessions.send(session.id, { type: 'send', turnId, text });
+        await refreshMessagesUntilTurn(session.id, turnId);
         await refreshSessions();
-        await window.maka.sessions.send(session.id, { type: 'send', turnId: crypto.randomUUID(), text });
         return true;
       }
-      await window.maka.sessions.send(activeId, { type: 'send', turnId: crypto.randomUUID(), text });
-      await refreshMessages(activeId);
+      const sessionId = activeId;
+      await window.maka.sessions.send(sessionId, { type: 'send', turnId, text });
+      await refreshMessagesUntilTurn(sessionId, turnId);
       return true;
     } catch (error) {
       if (isNoRealConnectionError(error)) {
@@ -1478,6 +1505,24 @@ function AppShell() {
         setMessages([]);
       }
     }
+  }
+
+  async function refreshMessagesUntilTurn(sessionId: string, turnId: string): Promise<void> {
+    const deadline = Date.now() + USER_MESSAGE_VISIBLE_TIMEOUT_MS;
+    while (Date.now() <= deadline) {
+      try {
+        const next = await window.maka.sessions.readMessages(sessionId);
+        if (activeIdRef.current === sessionId) {
+          setMessages(next);
+        }
+        if (next.some((message) => message.type === 'user' && message.turnId === turnId)) return;
+      } catch {
+        // Keep the current visible messages while the bounded retry loop
+        // waits for the async send path to persist the first user message.
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, USER_MESSAGE_VISIBLE_POLL_MS));
+    }
+    await refreshMessages(sessionId);
   }
 
   function clearStreaming(sessionId: string) {
@@ -2337,6 +2382,7 @@ function AppShell() {
           }}
           onOpenSession={(sessionId) => {
             closeSettings();
+            setNavSelection({ section: 'sessions', filter: 'chats' });
             setActiveId(sessionId);
           }}
         />
