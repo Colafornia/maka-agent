@@ -898,7 +898,16 @@ function DailyReviewPanel(props: {
   const [loading, setLoading] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
   const [pendingDailyReviewAction, setPendingDailyReviewAction] = useState<string | null>(null);
+  const dailyReviewMountedRef = useRef(true);
   const pendingDailyReviewActionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    dailyReviewMountedRef.current = true;
+    return () => {
+      dailyReviewMountedRef.current = false;
+      pendingDailyReviewActionRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -952,7 +961,7 @@ function DailyReviewPanel(props: {
     } finally {
       if (pendingDailyReviewActionRef.current === actionKey) {
         pendingDailyReviewActionRef.current = null;
-        setPendingDailyReviewAction(null);
+        if (dailyReviewMountedRef.current) setPendingDailyReviewAction(null);
       }
     }
   }
@@ -1236,6 +1245,7 @@ function PlanReminderPanel(props: {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [submitPending, setSubmitPending] = useState(false);
   const [pendingActionKeys, setPendingActionKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const planReminderMountedRef = useRef(true);
   const pendingActionKeysRef = useRef<Set<string>>(new Set());
   const [listFilter, setListFilter] = useState<PlanReminderListFilter>('all');
   const [listQuery, setListQuery] = useState('');
@@ -1269,6 +1279,14 @@ function PlanReminderPanel(props: {
   const submitDisabled = !canCreate || submitPending;
   const formInteractionDisabled = submitPending;
   const isEditing = editingId !== null;
+
+  useEffect(() => {
+    planReminderMountedRef.current = true;
+    return () => {
+      planReminderMountedRef.current = false;
+      pendingActionKeysRef.current = new Set();
+    };
+  }, []);
 
   useEffect(() => {
     if (editingId && !props.reminders.some((reminder) => reminder.id === editingId)) resetForm();
@@ -1343,9 +1361,9 @@ function PlanReminderPanel(props: {
           ...input,
           ...(input.note ? { note: input.note } : {}),
         });
-      if (result !== false) resetForm();
+      if (result !== false && planReminderMountedRef.current) resetForm();
     } finally {
-      setSubmitPending(false);
+      if (planReminderMountedRef.current) setSubmitPending(false);
     }
   }
 
@@ -1364,7 +1382,7 @@ function PlanReminderPanel(props: {
       const pendingWithoutAction = new Set(pendingActionKeysRef.current);
       pendingWithoutAction.delete(actionKey);
       pendingActionKeysRef.current = pendingWithoutAction;
-      setPendingActionKeys(pendingWithoutAction);
+      if (planReminderMountedRef.current) setPendingActionKeys(pendingWithoutAction);
     }
   }
 
@@ -2678,10 +2696,19 @@ function SessionRow(props: {
   const [editing, setEditing] = useState(false);
   const [actionsVisible, setActionsVisible] = useState(false);
   const [pendingAction, setPendingAction] = useState<SessionRowActionId | null>(null);
+  const rowMountedRef = useRef(true);
   const pendingActionRef = useRef<SessionRowActionId | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const actionBusy = pendingAction !== null;
   const actionTabIndex = actionsVisible ? 0 : -1;
+
+  useEffect(() => {
+    rowMountedRef.current = true;
+    return () => {
+      rowMountedRef.current = false;
+      pendingActionRef.current = null;
+    };
+  }, []);
 
   // Auto-focus + select-all when the row enters edit mode so the user can
   // overwrite the current name without an extra Cmd+A.
@@ -2709,7 +2736,7 @@ function SessionRow(props: {
     setPendingAction(actionId);
     void Promise.resolve().then(action).finally(() => {
       pendingActionRef.current = null;
-      setPendingAction(null);
+      if (rowMountedRef.current) setPendingAction(null);
     });
   }
 
@@ -5288,6 +5315,7 @@ export const Composer = forwardRef<
   const [hasDraftText, setHasDraftText] = useState(false);
   const draftStoreRef = useRef<Map<string, string>>(new Map());
   const activeDraftKeyRef = useRef<string | undefined>(props.draftKey);
+  const composerMountedRef = useRef(true);
   const sendPendingRef = useRef(false);
   const pendingImportActionRef = useRef<ComposerImportActionId | null>(null);
   const promptHistoryRef = useRef<ComposerHistoryState>({ entries: [], index: -1, savedDraft: '' });
@@ -5299,6 +5327,15 @@ export const Composer = forwardRef<
   const locale = detectUiLocale();
   const copy = COMPOSER_COPY_BY_LOCALE[locale];
   const buttonCopy = COMPOSER_BUTTON_COPY_BY_LOCALE[locale];
+
+  useEffect(() => {
+    composerMountedRef.current = true;
+    return () => {
+      composerMountedRef.current = false;
+      sendPendingRef.current = false;
+      pendingImportActionRef.current = null;
+    };
+  }, []);
 
   function autoResize() {
     const el = textareaRef.current;
@@ -5392,8 +5429,9 @@ export const Composer = forwardRef<
       sent = await props.onSend(text);
     } finally {
       sendPendingRef.current = false;
-      setSendPending(false);
+      if (composerMountedRef.current) setSendPending(false);
     }
+    if (!composerMountedRef.current) return;
     if (sent === false) return;
     promptHistoryRef.current = {
       entries: rememberComposerHistoryEntry(promptHistoryRef.current.entries, text),
@@ -5425,7 +5463,7 @@ export const Composer = forwardRef<
     } finally {
       if (pendingImportActionRef.current === actionId) {
         pendingImportActionRef.current = null;
-        setPendingImportAction(null);
+        if (composerMountedRef.current) setPendingImportAction(null);
       }
     }
   }

@@ -1339,8 +1339,17 @@ function VoiceModelsSettingsPage() {
   });
   const [isBusy, setIsBusy] = useState(false);
   const captureSmokeBusyRef = useRef(false);
+  const voicePageMountedRef = useRef(false);
   const toast = useToast();
   const caps = defaultVoiceCaptureCaps();
+
+  useEffect(() => {
+    voicePageMountedRef.current = true;
+    return () => {
+      voicePageMountedRef.current = false;
+      captureSmokeBusyRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1376,6 +1385,7 @@ function VoiceModelsSettingsPage() {
           sampleRate: caps.maxSampleRate,
         },
       });
+      if (!voicePageMountedRef.current) return;
       setPermission('granted');
       setSmoke({ status: 'recording', message: '正在录制 2 秒本地样本；样本只在内存里计算大小，结束后立即丢弃。' });
       const startedAt = performance.now();
@@ -1403,24 +1413,32 @@ function VoiceModelsSettingsPage() {
         channels: caps.maxChannels,
       });
       if (!validation.ok) {
-        setSmoke({ status: 'error', message: voiceValidationCopy(validation.reason) });
+        if (voicePageMountedRef.current) {
+          setSmoke({ status: 'error', message: voiceValidationCopy(validation.reason) });
+        }
         return;
       }
       const message = `录音链路可用：${formatVoiceDuration(durationMs)}，${formatVoiceBytes(audioBytes)}。样本未保存。`;
-      setSmoke({ status: 'ok', message, durationMs, audioBytes });
-      toast.success('语音自检通过', message);
+      if (voicePageMountedRef.current) {
+        setSmoke({ status: 'ok', message, durationMs, audioBytes });
+        toast.success('语音自检通过', message);
+      }
     } catch (error) {
       const next = classifyVoicePermissionError(error);
-      setPermission(next);
       const message = next === 'denied'
         ? '麦克风权限被拒绝；请在系统设置里允许 Maka 访问麦克风后重试。'
         : '录音自检失败；请确认系统权限和音频设备可用。';
-      setSmoke({ status: 'error', message });
-      toast.error('语音自检失败', message);
+      if (voicePageMountedRef.current) {
+        setPermission(next);
+        setSmoke({ status: 'error', message });
+        toast.error('语音自检失败', message);
+      }
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
       captureSmokeBusyRef.current = false;
-      setIsBusy(false);
+      if (voicePageMountedRef.current) {
+        setIsBusy(false);
+      }
     }
   }
 
@@ -1997,6 +2015,15 @@ function PersonalizationSettingsPage(props: {
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const personalizationMountedRef = useRef(false);
+
+  useEffect(() => {
+    personalizationMountedRef.current = true;
+    return () => {
+      personalizationMountedRef.current = false;
+      savingRef.current = false;
+    };
+  }, []);
 
   // PR-PERSONALIZATION-SYNC-0: sync form state when the persisted
   // personalization changes externally. Two real scenarios:
@@ -2036,15 +2063,23 @@ function PersonalizationSettingsPage(props: {
       // disclosed) per kenji's personalization-prompt-contract.
       const warnings = collectPersonalizationWarningCopy(result.warnings?.personalization ?? []);
       if (warnings) {
-        toast.warning('已保存并做安全清理', warnings);
+        if (personalizationMountedRef.current) {
+          toast.warning('已保存并做安全清理', warnings);
+        }
       } else {
-        toast.success('个性化已保存');
+        if (personalizationMountedRef.current) {
+          toast.success('个性化已保存');
+        }
       }
     } catch (error) {
-      toast.error('保存失败', settingsActionErrorMessage(error));
+      if (personalizationMountedRef.current) {
+        toast.error('保存失败', settingsActionErrorMessage(error));
+      }
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (personalizationMountedRef.current) {
+        setSaving(false);
+      }
     }
   }
 
@@ -3902,7 +3937,17 @@ function NetworkSettingsPage(props: {
   const proxyPendingSaveCountRef = useRef(0);
   const proxySaveTicketRef = useRef(0);
   const proxyTestRunningRef = useRef(false);
+  const networkPageMountedRef = useRef(false);
   const toast = useToast();
+
+  useEffect(() => {
+    networkPageMountedRef.current = true;
+    return () => {
+      networkPageMountedRef.current = false;
+      proxySaveTicketRef.current += 1;
+      proxyTestRunningRef.current = false;
+    };
+  }, []);
 
   function commitProxyDraft(next: NetworkProxySettings) {
     proxyDraftRef.current = next;
@@ -3924,14 +3969,14 @@ function NetworkSettingsPage(props: {
     commitProxyDraft(nextDraft);
     try {
       const result = await props.onUpdate({ network: { proxy: patch } });
-      if (ticket === proxySaveTicketRef.current) {
+      if (networkPageMountedRef.current && ticket === proxySaveTicketRef.current) {
         commitProxyDraft(result.settings.network.proxy);
       }
     } catch (error) {
-      if (ticket === proxySaveTicketRef.current) {
+      if (networkPageMountedRef.current && ticket === proxySaveTicketRef.current) {
         commitProxyDraft(persistedProxyRef.current);
+        toast.error('保存网络设置失败', settingsActionErrorMessage(error));
       }
-      toast.error('保存网络设置失败', settingsActionErrorMessage(error));
     } finally {
       proxyPendingSaveCountRef.current = Math.max(0, proxyPendingSaveCountRef.current - 1);
     }
@@ -3944,16 +3989,20 @@ function NetworkSettingsPage(props: {
     try {
       const result = await window.maka.settings.testNetworkProxy(toProxyTestInput(proxyDraftRef.current));
       const latency = result.latencyMs !== undefined ? ` · ${result.latencyMs} ms` : '';
-      if (result.ok) {
+      if (result.ok && networkPageMountedRef.current) {
         toast.success('代理可达', `${result.message}${latency}`);
-      } else {
+      } else if (networkPageMountedRef.current) {
         toast.error('代理测试失败', result.message);
       }
     } catch (error) {
-      toast.error('代理测试出错', settingsActionErrorMessage(error));
+      if (networkPageMountedRef.current) {
+        toast.error('代理测试出错', settingsActionErrorMessage(error));
+      }
     } finally {
       proxyTestRunningRef.current = false;
-      setTesting(false);
+      if (networkPageMountedRef.current) {
+        setTesting(false);
+      }
     }
   }
 
