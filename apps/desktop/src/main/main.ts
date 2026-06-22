@@ -203,6 +203,7 @@ import {
   type WorkspaceInstructionOpenFailureReason,
 } from './workspace-instructions.js';
 import { buildCapabilitySnapshotCollection, buildPermissionSnapshot } from './capability-snapshot.js';
+import { openSystemPermissionPane, requestPermissionAccess } from './permissions-actions.js';
 import {
   getVisualSmokeState,
   resolveVisualSmokeFixture,
@@ -3350,6 +3351,12 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('permissions:getSnapshot', () => buildPermissionSnapshot());
+  ipcMain.handle('permissions:openSystemSettings', async (_event, permId: unknown) => {
+    return openSystemPermissionPane(permId);
+  });
+  ipcMain.handle('permissions:requestAccess', async (_event, permId: unknown) => {
+    return requestPermissionAccess(permId);
+  });
   ipcMain.handle('capabilities:getSnapshot', async () => {
     const permissions = buildPermissionSnapshot();
     const settings = await settingsStore.get();

@@ -198,6 +198,18 @@ declare global {
       };
       permissions: {
         getSnapshot(): Promise<PermissionSnapshot>;
+        openSystemSettings(
+          permId: string,
+        ): Promise<
+          | { ok: true }
+          | { ok: false; reason: 'invalid_id' | 'unsupported_platform' | 'unsupported_permission' | 'failed'; message?: string }
+        >;
+        requestAccess(
+          permId: string,
+        ): Promise<
+          | { ok: true }
+          | { ok: false; reason: 'invalid_id' | 'unsupported_platform' | 'unsupported_permission' | 'failed'; message?: string }
+        >;
       };
       capabilities: {
         getSnapshot(): Promise<CapabilitySnapshotCollection>;

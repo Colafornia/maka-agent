@@ -275,6 +275,16 @@ contextBridge.exposeInMainWorld('maka', {
     getSnapshot(): Promise<PermissionSnapshot> {
       return ipcRenderer.invoke('permissions:getSnapshot');
     },
+    openSystemSettings(permId: string): Promise<
+      { ok: true } | { ok: false; reason: string; message?: string }
+    > {
+      return ipcRenderer.invoke('permissions:openSystemSettings', permId);
+    },
+    requestAccess(permId: string): Promise<
+      { ok: true } | { ok: false; reason: string; message?: string }
+    > {
+      return ipcRenderer.invoke('permissions:requestAccess', permId);
+    },
   },
   capabilities: {
     getSnapshot(): Promise<CapabilitySnapshotCollection> {

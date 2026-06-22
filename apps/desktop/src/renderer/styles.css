@@ -12094,35 +12094,96 @@ button:active {
   display: grid;
   gap: 6px;
 }
+
+/* PR-PERMISSION-PAGE-REDESIGN: card layout with icon + body + actions.
+   Mirrors the reference's row anatomy (icon-left / text / status pill /
+   action button) but uses our atlas page-card recipe (hairline border +
+   6px radius + 4% lift + inner highlight). */
 .settingsOsPermissionRow {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: flex-start;
-  gap: 16px;
+  gap: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--background);
+  border: 1px solid var(--card-border-color, var(--border));
+  border-radius: var(--card-radius, 8px);
+  background: var(--card-bg, var(--background));
+  box-shadow:
+    var(--card-shadow, none),
+    var(--card-highlight, none);
+  transition: border-color 160ms var(--ease-out-strong), box-shadow 160ms var(--ease-out-strong);
 }
-.settingsOsPermissionRow > div {
+
+.settingsOsPermissionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: oklch(from var(--foreground) l c h / 0.04);
+  color: var(--foreground-70);
+}
+
+.settingsOsPermissionBody {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  min-width: 0;
 }
-.settingsOsPermissionRow strong {
-  font-size: 0.85rem;
+
+.settingsOsPermissionHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settingsOsPermissionHeading strong {
+  font-size: 0.875rem;
   font-weight: 600;
+  color: var(--foreground);
 }
-.settingsOsPermissionRow small {
-  color: var(--foreground-60);
-  font-size: 0.76rem;
+
+.settingsOsPermissionPurpose {
+  color: var(--foreground-70);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.settingsOsPermissionImpact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  color: var(--foreground-65);
   line-height: 1.45;
 }
+.settingsOsPermissionImpactLabel {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: oklch(from var(--foreground) l c h / 0.05);
+  color: var(--foreground-55);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 .settingsOsPermissionReason {
   color: var(--foreground-50);
   font-size: 0.72rem !important;
   font-style: italic;
 }
+
+.settingsOsPermissionActions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
 .settingsOsPermissionRow[data-state="denied"] {
   border-color: oklch(from var(--destructive) l c h / 0.30);
 }
@@ -12131,6 +12192,67 @@ button:active {
 }
 .settingsOsPermissionRow[data-state="granted"] {
   border-color: oklch(from var(--success) l c h / 0.24);
+}
+.settingsOsPermissionRow[data-state="granted"] .settingsOsPermissionIcon {
+  background: oklch(from var(--success) l c h / 0.08);
+  color: oklch(from var(--success) l c h);
+}
+
+/* PR-PERMISSION-PAGE-REDESIGN: 4-cell summary above system permissions.
+   Quick read of overall posture (X granted / Y waiting / Z denied /
+   W other) so users see what's configured at a glance. */
+.settingsPermissionSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.settingsPermissionSummaryTile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--card-border-color, var(--border));
+  border-radius: var(--card-radius, 8px);
+  background: var(--card-bg, var(--background));
+  box-shadow:
+    var(--card-shadow, none),
+    var(--card-highlight, none);
+}
+.settingsPermissionSummaryValue {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+.settingsPermissionSummaryLabel {
+  font-size: 0.72rem;
+  color: var(--foreground-60);
+  letter-spacing: 0.02em;
+}
+.settingsPermissionSummaryTile[data-tone="success"] .settingsPermissionSummaryValue {
+  color: oklch(from var(--success) l c h);
+}
+.settingsPermissionSummaryTile[data-tone="warning"] .settingsPermissionSummaryValue {
+  color: oklch(from var(--warning, var(--info)) l c h);
+}
+.settingsPermissionSummaryTile[data-tone="destructive"] .settingsPermissionSummaryValue {
+  color: oklch(from var(--destructive) l c h);
+}
+
+/* Diagnostic 5-column capability detail collapsed by default so the
+   page reads as "system permissions" first. Expand on click. */
+.settingsPermissionSectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.settingsCapabilityList:not([data-diagnostics-open="true"]) .settingsCapabilityLayers,
+.settingsCapabilityList:not([data-diagnostics-open="true"]) .settingsCapabilityGuidance,
+.settingsCapabilityList:not([data-diagnostics-open="true"]) .settingsCapabilityAuditSlot,
+.settingsCapabilityList:not([data-diagnostics-open="true"]) .settingsCapabilityOsPermissions {
+  display: none;
 }
 
 .settingsPermissionFootnote {

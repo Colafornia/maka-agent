@@ -1,7 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type ComponentType, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import {
+  Accessibility as AccessibilityIcon,
   Activity,
   BarChart3,
+  Bell,
   Bot,
   Brain,
   CalendarDays,
@@ -9,6 +11,9 @@ import {
   Database,
   Globe,
   Info,
+  Mic,
+  Monitor,
+  MousePointer2,
   Network,
   Palette,
   Search,
@@ -6042,12 +6047,44 @@ const CAPABILITY_READINESS_COPY: Record<CapabilityReadinessState, { label: strin
   paused: { label: '已暂停', detail: '功能开关被显式关闭，但配置仍保留。', tone: 'info' },
 };
 
-const OS_PERMISSION_COPY: Record<OsPermissionId, { label: string; purpose: string }> = {
-  accessibility: { label: '辅助功能', purpose: 'Computer Use 需要它来读取窗口焦点 / 模拟键盘鼠标。' },
-  screen_recording: { label: '屏幕录制', purpose: 'Computer Use 需要它来读取窗口内容；未来屏幕活动录制也会使用。' },
-  microphone: { label: '麦克风', purpose: 'Voice 通道需要它来采集语音输入。' },
-  notifications: { label: '通知', purpose: '权限申请、回顾完成等系统通知需要它。' },
-  automation: { label: '自动化（Apple Events）', purpose: 'Computer Use 控制其他 App 需要逐 target 授权。' },
+interface OsPermissionUiCopy {
+  label: string;
+  purpose: string;
+  impact: string;
+  icon: ComponentType<LucideProps>;
+}
+
+const OS_PERMISSION_COPY: Record<OsPermissionId, OsPermissionUiCopy> = {
+  accessibility: {
+    label: '辅助功能',
+    purpose: 'Computer Use 需要它来读取窗口焦点 / 模拟键盘鼠标。',
+    impact: 'Computer Use · 自动化键鼠操作',
+    icon: AccessibilityIcon,
+  },
+  screen_recording: {
+    label: '屏幕录制',
+    purpose: 'Computer Use 需要它来读取窗口内容；未来屏幕活动录制也会使用。',
+    impact: 'Computer Use · 截屏上下文',
+    icon: Monitor,
+  },
+  microphone: {
+    label: '麦克风',
+    purpose: 'Voice 通道需要它来采集语音输入。',
+    impact: '语音输入',
+    icon: Mic,
+  },
+  notifications: {
+    label: '通知',
+    purpose: '权限申请、回顾完成等系统通知需要它。',
+    impact: '权限申请提醒 · 每日回顾完成通知',
+    icon: Bell,
+  },
+  automation: {
+    label: '自动化（Apple Events）',
+    purpose: 'Computer Use 控制其他 App 需要逐 target 授权。',
+    impact: 'Computer Use · 跨 App 自动化',
+    icon: MousePointer2,
+  },
 };
 
 const OS_PERMISSION_STATE_COPY: Record<OsPermissionState, { label: string; tone: 'neutral' | 'info' | 'success' | 'warning' | 'destructive' }> = {
@@ -6067,6 +6104,17 @@ function PermissionCenterPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [pendingPermAction, setPendingPermAction] = useState<string | null>(null);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const toast = useToast();
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -6091,6 +6139,31 @@ function PermissionCenterPage() {
       cancelled = true;
     };
   }, [refreshTick]);
+
+  async function runPermissionAction(
+    permId: OsPermissionId,
+    kind: 'request' | 'openSettings',
+  ) {
+    const actionKey = `${permId}:${kind}`;
+    setPendingPermAction(actionKey);
+    try {
+      const result =
+        kind === 'request'
+          ? await window.maka.permissions.requestAccess(permId)
+          : await window.maka.permissions.openSystemSettings(permId);
+      if (result.ok) {
+        // Refresh snapshot so the user sees the new state when they
+        // return from System Settings.
+        if (mountedRef.current) setRefreshTick((tick) => tick + 1);
+      } else if (mountedRef.current) {
+        toast.error('权限操作失败', permissionActionFailureCopy(result.reason, result.message));
+      }
+    } catch (err) {
+      if (mountedRef.current) toast.error('权限操作失败', settingsActionErrorMessage(err));
+    } finally {
+      if (mountedRef.current) setPendingPermAction(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -6118,21 +6191,21 @@ function PermissionCenterPage() {
   }
 
   const checkedAtMs = capabilities.checkedAt;
+  const counts = summarizePermissionStatuses(permissions);
 
   return (
     <div className="settingsPermissionPage">
       <header className="settingsPermissionIntro">
         <div>
-          <h3>权限与能力中心</h3>
+          <h3>权限与能力</h3>
           <p>
-            这里只读取系统权限与功能能力的当前快照，不会代替你修改任何 OS 权限。
-            需要变更权限时，请前往「系统设置 → 隐私与安全性」完成授权或撤销。
+            查看 Maka 需要的系统权限和当前授权状态，
+            直接从这里前往「系统设置 → 隐私与安全性」完成授权或撤销，不必自己翻菜单。
           </p>
         </div>
         <div className="settingsPermissionMeta">
-          <span className="pill" data-tone="info">只读快照</span>
           <small>
-            最近一次读取：<RelativeTime ts={checkedAtMs} className="settingsHelpInlineTime" />
+            最近读取：<RelativeTime ts={checkedAtMs} className="settingsHelpInlineTime" />
           </small>
           <Button
             type="button"
@@ -6140,41 +6213,124 @@ function PermissionCenterPage() {
             variant="secondary"
             onClick={() => setRefreshTick((tick) => tick + 1)}
           >
-            刷新
+            重新检测
           </Button>
         </div>
       </header>
 
-      <section aria-label="功能能力" className="settingsPermissionSection">
+      <section className="settingsPermissionSummary" aria-label="权限概览">
+        <PermissionSummaryTile label="已授权" value={counts.granted} tone="success" />
+        <PermissionSummaryTile label="等待授权" value={counts.pending} tone="warning" />
+        <PermissionSummaryTile label="已拒绝" value={counts.denied} tone="destructive" />
+        <PermissionSummaryTile label="未知 / 不支持" value={counts.other} tone="neutral" />
+      </section>
+
+      <section aria-label="系统权限" className="settingsPermissionSection">
         <header>
-          <h4>功能能力</h4>
-          <small>每个能力的就绪状态由「功能开关 · 配置 · 系统权限 · 运行态探测」共同决定。</small>
+          <h4>系统权限</h4>
+          <small>Maka 读到的 OS 级权限状态。点击右侧按钮可以直接前往「系统设置 → 隐私与安全性」对应分区。</small>
         </header>
-        <ul className="settingsCapabilityList" aria-label="功能能力列表">
+        <ul className="settingsOsPermissionList" aria-label="系统权限列表">
+          {OS_PERMISSION_IDS.map((id) => (
+            <OsPermissionRow
+              key={id}
+              snapshot={permissions.permissions[id]}
+              busy={pendingPermAction !== null}
+              pendingKey={pendingPermAction === `${id}:request` ? 'request' : pendingPermAction === `${id}:openSettings` ? 'openSettings' : null}
+              onRequest={() => void runPermissionAction(id, 'request')}
+              onOpenSettings={() => void runPermissionAction(id, 'openSettings')}
+            />
+          ))}
+        </ul>
+      </section>
+
+      <section aria-label="功能能力" className="settingsPermissionSection">
+        <header className="settingsPermissionSectionHeader">
+          <div>
+            <h4>功能能力</h4>
+            <small>每个能力的就绪状态由「功能开关 · 配置 · 系统权限 · 运行态探测」共同决定。</small>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setDiagnosticsOpen((open) => !open)}
+            aria-expanded={diagnosticsOpen}
+          >
+            {diagnosticsOpen ? '收起详情' : '展开详情'}
+          </Button>
+        </header>
+        <ul className="settingsCapabilityList" aria-label="功能能力列表" data-diagnostics-open={diagnosticsOpen ? 'true' : undefined}>
           {capabilities.capabilities.map((capability) => (
             <CapabilityRow key={capability.id} capability={capability} />
           ))}
         </ul>
       </section>
 
-      <section aria-label="系统权限" className="settingsPermissionSection">
-        <header>
-          <h4>系统权限</h4>
-          <small>Maka 读到的 OS 级权限状态。撤销请前往「系统设置 → 隐私与安全性」。</small>
-        </header>
-        <ul className="settingsOsPermissionList" aria-label="系统权限列表">
-          {OS_PERMISSION_IDS.map((id) => (
-            <OsPermissionRow key={id} snapshot={permissions.permissions[id]} />
-          ))}
-        </ul>
-      </section>
-
       <p className="settingsPermissionFootnote">
-        本页不会自动授予 Accessibility、Automation 或 Screen Recording。
+        Maka 不会自动授予 Accessibility、Automation 或 Screen Recording。
         高风险自动化能力必须保持逐项审批、可审计、可撤销。
+        这里只读取系统权限与功能能力的当前快照，授权变更仍需在「系统设置 → 隐私与安全性」完成。
       </p>
     </div>
   );
+}
+
+function PermissionSummaryTile(props: {
+  label: string;
+  value: number;
+  tone: 'success' | 'warning' | 'destructive' | 'neutral';
+}) {
+  return (
+    <div className="settingsPermissionSummaryTile" data-tone={props.tone}>
+      <span className="settingsPermissionSummaryValue">{props.value}</span>
+      <span className="settingsPermissionSummaryLabel">{props.label}</span>
+    </div>
+  );
+}
+
+function summarizePermissionStatuses(snapshot: PermissionSnapshot): {
+  granted: number;
+  pending: number;
+  denied: number;
+  other: number;
+} {
+  let granted = 0;
+  let pending = 0;
+  let denied = 0;
+  let other = 0;
+  for (const id of OS_PERMISSION_IDS) {
+    const status = snapshot.permissions[id]?.status;
+    switch (status) {
+      case 'granted':
+        granted += 1;
+        break;
+      case 'not_determined':
+        pending += 1;
+        break;
+      case 'denied':
+        denied += 1;
+        break;
+      default:
+        other += 1;
+    }
+  }
+  return { granted, pending, denied, other };
+}
+
+function permissionActionFailureCopy(reason: string, message?: string): string {
+  switch (reason) {
+    case 'invalid_id':
+      return '内部错误：权限 id 无法识别。';
+    case 'unsupported_platform':
+      return '当前操作系统不支持这个权限操作。';
+    case 'unsupported_permission':
+      return '当前平台没有提供这个权限的直接入口。';
+    case 'failed':
+      return message ?? '权限操作未成功，请稍后重试。';
+    default:
+      return message ?? '权限操作未成功，请稍后重试。';
+  }
 }
 
 function CapabilityRow(props: { capability: CapabilitySnapshot }) {
@@ -6326,18 +6482,70 @@ function CapabilityRow(props: { capability: CapabilitySnapshot }) {
   );
 }
 
-function OsPermissionRow(props: { snapshot: OsPermissionSnapshot }) {
-  const { snapshot } = props;
-  const copy = OS_PERMISSION_COPY[snapshot.id] ?? { label: snapshot.id, purpose: '' };
+function OsPermissionRow(props: {
+  snapshot: OsPermissionSnapshot;
+  busy: boolean;
+  pendingKey: 'request' | 'openSettings' | null;
+  onRequest: () => void;
+  onOpenSettings: () => void;
+}) {
+  const { snapshot, busy, pendingKey } = props;
+  const copy = OS_PERMISSION_COPY[snapshot.id];
+  const Icon = copy?.icon;
+  const label = copy?.label ?? snapshot.id;
+  const purpose = copy?.purpose ?? '';
+  const impact = copy?.impact ?? '';
   const stateCopy = OS_PERMISSION_STATE_COPY[snapshot.status];
+
+  const showRequest = snapshot.canRequest && snapshot.status !== 'granted';
+  const showOpenSettings = snapshot.canOpenSettings && snapshot.status !== 'granted';
+
   return (
     <li className="settingsOsPermissionRow" data-state={snapshot.status}>
-      <div>
-        <strong>{copy.label}</strong>
-        <small>{copy.purpose}</small>
-        {snapshot.reason && <small className="settingsOsPermissionReason">{snapshot.reason}</small>}
+      <div className="settingsOsPermissionIcon" aria-hidden="true">
+        {Icon ? <Icon size={18} strokeWidth={1.6} /> : null}
       </div>
-      <span className="pill" data-tone={stateCopy.tone}>{stateCopy.label}</span>
+      <div className="settingsOsPermissionBody">
+        <div className="settingsOsPermissionHeading">
+          <strong>{label}</strong>
+          <span className="pill" data-tone={stateCopy.tone}>{stateCopy.label}</span>
+        </div>
+        <small className="settingsOsPermissionPurpose">{purpose}</small>
+        {impact ? (
+          <small className="settingsOsPermissionImpact">
+            <span className="settingsOsPermissionImpactLabel">影响功能</span>
+            <span>{impact}</span>
+          </small>
+        ) : null}
+        {snapshot.reason ? (
+          <small className="settingsOsPermissionReason">{snapshot.reason}</small>
+        ) : null}
+      </div>
+      <div className="settingsOsPermissionActions">
+        {showRequest && (
+          <Button
+            type="button"
+            size="sm"
+            onClick={props.onRequest}
+            disabled={busy}
+            aria-busy={pendingKey === 'request' ? 'true' : undefined}
+          >
+            {pendingKey === 'request' ? '请求中…' : '请求授权'}
+          </Button>
+        )}
+        {showOpenSettings && (
+          <Button
+            type="button"
+            variant={showRequest ? 'secondary' : 'default'}
+            size="sm"
+            onClick={props.onOpenSettings}
+            disabled={busy}
+            aria-busy={pendingKey === 'openSettings' ? 'true' : undefined}
+          >
+            {pendingKey === 'openSettings' ? '打开中…' : '前往系统设置'}
+          </Button>
+        )}
+      </div>
     </li>
   );
 }

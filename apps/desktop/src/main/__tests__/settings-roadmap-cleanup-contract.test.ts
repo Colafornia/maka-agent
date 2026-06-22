@@ -190,10 +190,16 @@ describe('Settings coming-soon cleanup contract', () => {
 
     assert.ok(permissionPage, 'Permission Center page block must exist');
     assert.ok(capabilityRow, 'Permission Center capability row block must exist');
-    assert.match(permissionPage![0], /只读取系统权限与功能能力的当前快照/, 'Permission Center must explain the current read-only snapshot boundary');
+    // PR-PERMISSION-PAGE-REDESIGN: page is no longer a pure read-only
+    // snapshot — system permissions row now exposes 请求授权 / 前往系统设置
+    // action buttons. The "read-only snapshot" framing moved to the
+    // footnote so the page intro can lead with the action affordance.
+    assert.match(permissionPage![0], /只读取系统权限与功能能力的当前快照/, 'Permission Center footnote must still explain the read-only snapshot boundary for capabilities');
     assert.match(permissionPage![0], /系统设置 → 隐私与安全性/, 'Permission Center must point users to the current OS permission path');
-    assert.match(permissionPage![0], /<ul className="settingsCapabilityList" aria-label="功能能力列表">/, 'Permission Center capability list must have an accessible name');
+    assert.match(permissionPage![0], /<ul className="settingsCapabilityList" aria-label="功能能力列表"/, 'Permission Center capability list must have an accessible name');
     assert.match(permissionPage![0], /<ul className="settingsOsPermissionList" aria-label="系统权限列表">/, 'Permission Center OS permission list must have an accessible name');
+    assert.match(permissionPage![0], /window\.maka\.permissions\.requestAccess/, 'Permission Center must wire the requestAccess IPC for direct-request permissions');
+    assert.match(permissionPage![0], /window\.maka\.permissions\.openSystemSettings/, 'Permission Center must wire the openSystemSettings IPC for deep-link permissions');
     assert.match(capabilityRow![0], /<dl className="settingsCapabilityLayers" aria-label=\{`\$\{capability\.label\}能力状态明细`\}>/, 'Capability status definition lists must expose row-scoped accessible names');
     assert.match(capabilityRow![0], /<ul aria-label=\{`\$\{capability\.label\}所需系统权限列表`\}>/, 'Capability required-permission lists must expose row-scoped accessible names');
     assert.match(capabilityRow![0], /<ul aria-label=\{`\$\{capability\.label\}处理建议列表`\}>/, 'Capability guidance lists must expose row-scoped accessible names');
