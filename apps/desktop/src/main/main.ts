@@ -1432,7 +1432,12 @@ async function createWindow(): Promise<void> {
     // (Big Sur+). Renderer CSS gates the transparency on
     // `[data-vibrancy="active"]` so non-macOS builds (where vibrancy is
     // a no-op) keep their opaque chrome.
-    ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
+    // Skip vibrancy under MAKA_VISUAL_SMOKE_FIXTURE — capture environments
+    // can't paint native window material reliably, and the auto-capture
+    // renderer would stall waiting for compositor frames that never settle.
+    ...(process.platform === 'darwin' && !process.env.MAKA_VISUAL_SMOKE_FIXTURE
+      ? { vibrancy: 'sidebar' as const }
+      : {}),
     webPreferences: {
       preload: join(import.meta.dirname, '..', 'preload', 'preload.cjs'),
       // Defense-in-depth flags (@kenji PR96 review). The external-link guard
