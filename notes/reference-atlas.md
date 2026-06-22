@@ -837,3 +837,98 @@ Combining §13.7 + §14:
 
 Items 1-5 are pure CSS, can ship today. Items 6-7 need small JSX
 changes. Items 8-10 are bigger (new IPC / new dialog mounting).
+
+---
+
+## 15. Deep-RE Round 5 — Fonts, hero, blur-layer (§15)
+
+Following WAWQAQ msg 500eddc9 ("一定要多做、多分析…深度抄袭和学习 qoderwork
+界面 布局"). This round catches typography + visual-effect patterns I
+hadn't decoded.
+
+### 15.1 Instrument Sans variable font on hero surfaces
+
+Reference loads a downloaded variable font:
+```css
+@font-face {
+  font-family: Instrument Sans;
+  src: url(./InstrumentSans-…ttf) format("truetype");
+  font-weight: 1 1000;
+  font-display: swap;
+}
+```
+
+Used only on `.welcome-title` and `.login-title`:
+```css
+.welcome-title {
+  font-variation-settings: "wdth" 100, "wght" 500;
+  font-family: Instrument Sans, ui-sans-serif, system-ui, sans-serif;
+}
+```
+
+When `[data-font-style=serif]` is set, falls back to `--font-body`
+(Libre Baskerville).
+
+**Insight**: reference distinguishes hero typography from chrome
+typography via a specific variable font with bespoke axes. Maka uses
+Geist Variable everywhere — adopting the same distinction WITHOUT
+shipping a second font is possible: set
+`font-variation-settings: "wght" 550, "wdth" 105` on hero titles to
+get the "wider, slightly heavier" feel. This commit applies it to
+`.maka-hero h1` / `.emptyChat h1`.
+
+### 15.2 `[data-gradual-blur-layer]` overlay pattern
+
+Reference has a `[data-gradual-blur-layer]` attribute marking a
+backdrop-blur scrim element used to fade out content edges (e.g.
+under a sticky header). It uses `-webkit-backdrop-filter` directly,
+and the `[data-glass-effects=off]` toggle disables it via
+`-webkit-backdrop-filter: none !important`.
+
+**Pattern**: a fixed `pointer-events: none` overlay layer at the top
+or bottom of a scroll container with a `linear-gradient(transparent
+0%, var(--background) 100%)` mask + `backdrop-filter: blur(8px)`
+creates a "content fades into chrome" effect. Maka has no equivalent;
+adding one on sticky chat headers / sidebar scroll edges would close
+a real polish gap.
+
+### 15.3 Font-display swap + Instrument Sans local
+
+Reference's font is shipped at the bundle, loaded with `font-display:
+swap`. Best practice for variable fonts in Electron — initial paint
+uses the system fallback (`ui-sans-serif, system-ui`) while the
+variable font loads from local disk (fast on first run, instant on
+subsequent). Maka uses Geist Variable from `@fontsource-variable/geist`
+which also self-hosts and uses `font-display: swap` by default.
+Aligned by accident; not a gap.
+
+### 15.4 `[data-os=win32][data-glass-effects=off]` per-platform fallback
+
+For Windows users who explicitly disable glass effects via Settings,
+reference disables ALL `backdrop-filter` rules globally:
+
+```css
+:root[data-os=win32][data-glass-effects=off] [class*=backdrop-blur],
+:root[data-os=win32][data-glass-effects=off] [data-gradual-blur-layer],
+:root[data-os=win32][data-glass-effects=off] .agents-layout-root,
+:root[data-os=win32][data-glass-effects=off] [data-resizable-sidebar].agents-sidebar.agents-sidebar-floating-glass {
+  -webkit-backdrop-filter: none !important;
+}
+```
+
+Maka's `data-os` is set on `<html>` after Phase 2C (atlas §12.1).
+Adopting the `data-glass-effects` toggle would let users opt out of
+sidebar vibrancy on macOS too — useful for users who find blur
+distracting. Pattern: add a Settings toggle that writes
+`document.documentElement.dataset.glassEffects = 'off' | 'on'`, gate
+the existing sidebar glass CSS rules on `:not([data-glass-effects=off])`.
+
+### 15.5 Phase 5 candidate list (expanded)
+
+Adding to atlas §14.6:
+11. Variable-font hero typography (Geist axes) — applied in this commit
+12. `[data-gradual-blur-layer]` overlay primitive — ~10 lines of CSS,
+    one CSS rule + apply attribute on sticky-header containers
+13. `[data-glass-effects]` opt-out toggle — small Settings JSX + CSS
+    pattern gating
+14. Login surface (Maka has no auth; future surface if we add it)

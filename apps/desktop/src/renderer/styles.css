@@ -5536,10 +5536,19 @@ button:active {
 .emptyChat h1 {
   margin: 0;
   max-width: 34ch;
-  font-size: 28px;
-  font-weight: 600;
-  line-height: 1.12;
-  text-wrap: pretty;
+  /* Phase 4A hero typography — atlas §15 deep RE notes reference uses
+     `.welcome-title` with `Instrument Sans` variable font at wdth:100/
+     wght:500 for hero. Maka uses Geist Variable which also has wdth +
+     wght axes. Pulling the heading to 32px / wght 550 / -0.018em
+     tracking + setting font-variation-settings wdth 105 gives the
+     hero the same "wider, slightly heavier, optically distinct from
+     chrome" feel without adding a second variable font asset. */
+  font-size: 32px;
+  font-weight: 550;
+  letter-spacing: -0.018em;
+  line-height: 1.1;
+  font-variation-settings: "wght" 550, "wdth" 105;
+  text-wrap: balance;
 }
 
 .maka-hero p,
@@ -5547,8 +5556,8 @@ button:active {
   margin: 0;
   max-width: 54ch;
   color: var(--foreground-60);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 14.5px;
+  line-height: 1.55;
   text-wrap: pretty;
 }
 
