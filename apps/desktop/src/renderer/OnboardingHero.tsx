@@ -22,7 +22,19 @@
 import { ArrowRight, RotateCcw, Sparkles, KeyRound, Settings as SettingsIcon, Cpu, AlertCircle, FolderOpen, Paperclip, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import type { LlmConnection, OnboardingMilestone, OnboardingState, ProviderType, QuickChatMode, SettingsSection } from '@maka/core';
-import { Button, Textarea, appendPromptContextDraft, detectUiLocale, type UiLocale } from '@maka/ui';
+import {
+  Button,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+  Textarea,
+  appendPromptContextDraft,
+  detectUiLocale,
+  type UiLocale,
+} from '@maka/ui';
 import { ProviderLogo, providerDisplay } from './settings/ProvidersPanel';
 import {
   FIRST_RUN_TASK_SUGGESTIONS,
@@ -295,19 +307,25 @@ function NeedsConnectionHero(props: {
           const display = providerDisplay(entry.type);
           return (
             <li key={entry.type}>
-              <Button
-                type="button"
-                variant="ghost"
-                className="maka-onboarding-card"
-                onClick={() => props.onOpenSettings('models')}
+              <Item
+                render={
+                  <button
+                    type="button"
+                    onClick={() => props.onOpenSettings('models')}
+                  />
+                }
               >
-                <ProviderLogo type={entry.type} compact />
-                <div className="maka-onboarding-card-copy">
-                  <strong>{entry.tag}</strong>
-                  <small>{display.description}</small>
-                </div>
-                <ArrowRight size={14} strokeWidth={1.75} aria-hidden="true" />
-              </Button>
+                <ItemMedia>
+                  <ProviderLogo type={entry.type} compact />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{entry.tag}</ItemTitle>
+                  <ItemDescription>{display.description}</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <ArrowRight size={14} strokeWidth={1.75} aria-hidden="true" />
+                </ItemActions>
+              </Item>
             </li>
           );
         })}

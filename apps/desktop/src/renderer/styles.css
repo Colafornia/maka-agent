@@ -1584,40 +1584,6 @@ button:active {
   }
 }
 
-.maka-onboarding-card {
-  width: 100%;
-  height: auto;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 12px;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--foreground);
-  text-align: left;
-  transition:
-    background 150ms var(--ease-out-strong),
-    transform 180ms var(--ease-out-strong),
-    box-shadow 220ms var(--ease-out-strong);
-}
-
-.maka-onboarding-card:hover {
-  background: oklch(from var(--foreground) l c h / 0.04);
-  transform: translateX(2px);
-  box-shadow: none;
-}
-
-.maka-onboarding-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.maka-onboarding-card:active:not(:disabled) {
-  background: oklch(from var(--foreground) l c h / 0.07);
-}
-
 /* PR-UI-7: stagger entrance on provider tiles. Each card delays
  * 40ms longer than the previous so the grid populates feeling alive
  * rather than appearing all at once. Up to 6 tiles supported (FEATURED
@@ -1647,39 +1613,10 @@ button:active {
   .maka-onboarding-grid > li {
     animation: none;
   }
-  .maka-onboarding-card:hover {
-    transform: none;
-  }
 }
 
 [data-maka-visual-smoke="true"] .maka-onboarding-grid > li {
   animation: none;
-}
-
-.maka-onboarding-card-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.maka-onboarding-card-copy strong {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.maka-onboarding-card-copy small {
-  color: var(--foreground-60);
-  font-size: 11px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.maka-onboarding-card > :last-child {
-  color: var(--foreground-40);
 }
 
 .maka-onboarding-footer {
