@@ -615,31 +615,67 @@ const GREP_SCRIPT = `${COMMON_SHELL_HELPERS}
 root=$(pwd -P) || exit 1
 grep_pattern=$1
 input_path=$2
+glob=$3
 glob_re=$4
 if [ -n "$input_path" ]; then
   start=$(existing_target "$input_path" 'Grep path') || exit 1
 else
   start=$root
 fi
-if [ -f "$start" ]; then
-  file_list=$start
+# Prefer rg for the common no-glob case: faster, skips binaries, and a far richer
+# regex than awk. rg's gitignore-style --glob is a different dialect from the
+# fallback's ERE, so routing every glob through the single fallback path keeps
+# results identical with or without rg installed; otherwise the POSIX find/awk
+# walk runs. Output stays "<relpath>:<line>:<text>" and the per-file (50) / total
+# (200) caps are preserved. existing_target above already enforced the inside-
+# workspace + no-symlink-escape invariant for the search root in both paths;
+# input_path is workspace-relative so rg, run from root, emits workspace-relative
+# paths.
+if [ -z "$glob" ] && command -v rg >/dev/null 2>&1; then
+  # Always pass an explicit path: with none, rg reads from its (never-closing)
+  # stdin pipe and hangs. "." searches the whole workspace; rg prefixes those
+  # hits with "./", stripped below to the bare relative-path contract.
+  search=$input_path
+  [ -n "$search" ] || search=.
+  # The rg arg list is fixed — no glob is routed here, so nothing is assembled
+  # dynamically (and --glob is never re-grown into this branch):
+  # --no-config: ignore RIPGREP_CONFIG_PATH so a host-set rg config cannot inject
+  #   flags (e.g. --follow) that would break the no-workspace-escape invariant.
+  # --no-follow: never traverse symlinks, matching the find/awk fallback (find
+  #   without -L), so a workspace-internal symlink cannot leak external files.
+  # --no-ignore --hidden: search the same file set as the fallback, so results do
+  #   not depend on whether rg happens to be installed (rg still skips binaries).
+  # --with-filename keeps the filename on single-file searches so the
+  #   "<relpath>:<line>:<text>" contract holds in every case.
+  # Capture only stdout; rg's stderr flows through to the script's stderr so a
+  # real error is surfaced to the agent (via the executor) instead of swallowed.
+  # rg exit: 0 = matched, 1 = no match (-> empty result), >1 = a real error (bad
+  # regex, I/O) that must surface instead of masquerading as "no hits".
+  matches=$(rg --no-config --no-follow --line-number --no-heading --with-filename --color never --no-ignore --hidden --max-count 50 -e "$grep_pattern" -- "$search")
+  rc=$?
+  [ "$rc" -gt 1 ] && { echo "ripgrep failed (exit $rc)" >&2; exit "$rc"; }
+  printf '%s\n' "$matches" | sed 's#^\\./##' | awk 'NR <= 200'
 else
-  file_list=$(find "$start" -type f -print)
-fi
-printf '%s\n' "$file_list" | while IFS= read -r file; do
-  [ -n "$file" ] || continue
-  rel=$file
-  prefix=$root/
-  case "$rel" in "$prefix"*) rel=\${rel#"$prefix"} ;; esac
-  if [ -n "$glob_re" ]; then
-    printf '%s\n' "$rel" | awk -v re="$glob_re" 'BEGIN { ok = 1 } $0 ~ re { ok = 0 } END { exit ok }' || continue
+  if [ -f "$start" ]; then
+    file_list=$start
+  else
+    file_list=$(find "$start" -type f -print)
   fi
-  awk -v rel="$rel" -v pattern="$grep_pattern" '
-    $0 ~ pattern {
-      print rel ":" NR ":" $0
-      count += 1
-      if (count >= 50) exit
-    }
-  ' "$file"
-done | awk 'NR <= 200'
+  printf '%s\n' "$file_list" | while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    rel=$file
+    prefix=$root/
+    case "$rel" in "$prefix"*) rel=\${rel#"$prefix"} ;; esac
+    if [ -n "$glob_re" ]; then
+      printf '%s\n' "$rel" | awk -v re="$glob_re" 'BEGIN { ok = 1 } $0 ~ re { ok = 0 } END { exit ok }' || continue
+    fi
+    awk -v rel="$rel" -v pattern="$grep_pattern" '
+      $0 ~ pattern {
+        print rel ":" NR ":" $0
+        count += 1
+        if (count >= 50) exit
+      }
+    ' "$file"
+  done | awk 'NR <= 200'
+fi
 `;
