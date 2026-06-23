@@ -7539,10 +7539,12 @@ button:active {
   min-width: 0;
 }
 /* Allow inputs to take a comfortable cap width on horizontal rows so
-   the description column has space to breathe. */
+   the description column has space to breathe.
+   PR-SETTINGS-INPUT-POLISH-0: cap from 280 → 320 since rows are now
+   roomier (24px L/R padding). */
 .settingsField[data-orient="horizontal"] > input,
 .settingsField[data-orient="horizontal"] > .settingsBaseSelectTrigger {
-  max-width: 280px;
+  max-width: 320px;
 }
 /* The horizontal row above the first one shouldn't carry a top border;
    below the last one the section footer takes over. The default
@@ -7551,6 +7553,11 @@ button:active {
   border-top: 0;
 }
 
+/* PR-SETTINGS-INPUT-POLISH-0 (round 6/15, WAWQAQ msg `f7e9d166`):
+   inputs inside settings rows were at 12px / 26px min-height with
+   tight 0/8 padding — visibly thin against the now-bigger row
+   typography (15px label / 13px hint / 26×46 switch). Bump to a
+   14px input with 34px min-height and proper padding. */
 .settingsField input,
 .settingsField textarea,
 .settingsFormGrid input,
@@ -7558,23 +7565,24 @@ button:active {
 .settingsUsageFilters input,
 .settingsUsageFilters select {
   min-width: 0;
-  min-height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  min-height: 34px;
+  border: 1px solid oklch(from var(--foreground) l c h / 0.12);
+  border-radius: 7px;
   background: var(--background);
   color: var(--foreground);
-  padding: 0 8px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 14px;
+  line-height: 1.4;
   outline: none;
   transition: border-color 150ms var(--ease-out-strong), box-shadow 150ms var(--ease-out-strong);
 }
 
 .settingsField textarea {
-  border-radius: 6px;
-  padding: 6px 8px;
-  line-height: 1.45;
+  border-radius: 7px;
+  padding: 8px 10px;
+  line-height: 1.5;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .settingsField input:focus,
