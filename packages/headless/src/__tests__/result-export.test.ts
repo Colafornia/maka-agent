@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { renderTaskRunMarkdown, taskRunExportFromProjection, writeTaskRunExport } from '../result-export.js';
-import type { HeavyTaskCompactEvidenceEnvelope, HeavyTaskEngineeringRecord, HeavyTaskTodoItem, TaskEvent } from '../task-contracts.js';
+import type { HeavyTaskTodoItem, TaskEvent } from '../task-contracts.js';
 import { projectTaskRun } from '../task-run-store.js';
 
 describe('task run export', () => {
@@ -173,59 +173,6 @@ describe('task run export', () => {
 
     assert.equal(exported.policy, undefined);
     assert.equal(exported.progress, undefined);
-  });
-
-  test('exports bounded heavy-task engineering state in full and compact result views', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'maka-engineering-export-'));
-    try {
-      const projection = projectTaskRun([
-        { type: 'task_run_created', id: 'e1', taskRunId: 'run-engineering-export', ts: 1, taskId: 'task-1', configId: 'cfg-1' },
-        {
-          type: 'heavy_task_todos_recorded',
-          id: 'e-todos',
-          taskRunId: 'run-engineering-export',
-          ts: 1.5,
-          todos: {
-            schemaVersion: 1,
-            todoSetId: 'todos-1',
-            taskRunId: 'run-engineering-export',
-            ts: 1.5,
-            items: [{ id: 'todo-export', content: 'Export engineering records', status: 'in_progress', priority: 'high' }],
-            source: { kind: 'model_tool', toolCallId: 'tool-todos' },
-          },
-        },
-        engineeringEvidenceEvent('run-engineering-export'),
-        {
-          type: 'heavy_task_engineering_recorded',
-          id: 'e2',
-          taskRunId: 'run-engineering-export',
-          ts: 2,
-          record: engineeringRecord('run-engineering-export', 'record-1', 'complete'),
-        },
-        {
-          type: 'heavy_task_engineering_recorded',
-          id: 'e3',
-          taskRunId: 'run-engineering-export',
-          ts: 3,
-          record: engineeringRecord('run-engineering-export', 'record-2', 'incomplete'),
-        },
-      ], 'run-engineering-export');
-
-      const exported = taskRunExportFromProjection(projection, { exportedAt: '2026-06-23T00:00:00.000Z' });
-      assert.equal(exported.progress?.engineering?.historyCount, 2);
-      assert.equal(exported.progress?.engineering?.incompleteCount, 1);
-      assert.equal(exported.progress?.engineering?.latest.recordId, 'record-2');
-      assert.equal(exported.progress?.engineering?.recent.length, 2);
-
-      const written = await writeTaskRunExport(dir, projection, { exportedAt: '2026-06-23T00:00:00.000Z' });
-      const full = JSON.parse(await readFile(written.files.taskRunJson, 'utf8'));
-      const compact = JSON.parse(await readFile(written.files.resultJson, 'utf8'));
-      assert.equal(full.progress.engineering.historyCount, 2);
-      assert.equal(compact.progress.engineering.incompleteCount, 1);
-      assert.equal(compact.progress.engineering.latest.summary.includes('raw stdout'), false);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
   });
 
   test('exports heavy-task progress snapshots and compact result progress', async () => {
@@ -398,9 +345,6 @@ describe('task run export', () => {
     assert.equal(exported.heavyTask?.completion.runtime.capLike, true);
     assert.equal(exported.heavyTask?.completion.semantic.status, 'complete');
     assert.equal(exported.heavyTask?.completion.semantic.advisory, true);
-    assert.equal(exported.heavyTask?.completion.semantic.evidenceChain.outcome, 'complete');
-    assert.ok(exported.heavyTask?.completion.semantic.evidenceChain.completeItemIds.includes('targeted_check:check-edit'));
-    assert.deepEqual(exported.heavyTask?.completion.semantic.evidenceChain.nonblockingItemIds, ['todo:optional-polish']);
     assert.deepEqual(exported.heavyTask?.completion.semantic.unresolvedTodoIds, []);
     assert.deepEqual(exported.heavyTask?.completion.semantic.nonblockingTodoIds, ['optional-polish']);
     assert.equal(exported.heavyTask?.completion.finalization.eligible, true);
@@ -424,6 +368,22 @@ describe('task run export', () => {
   test('exports semantic incomplete and finalization ineligible when todos are unresolved', () => {
     const events = heavyTaskCompletionEvents([
       { id: 'edit', content: 'Patch implementation', status: 'completed', priority: 'high' },
+      {
+        id: 'artifact',
+        kind: 'runnable_artifact',
+        content: 'Create first runnable artifact',
+        status: 'completed',
+        priority: 'high',
+        evidence: 'Runnable artifact exists in public workspace.',
+      },
+      {
+        id: 'check',
+        kind: 'public_check',
+        content: 'Run public check',
+        status: 'completed',
+        priority: 'high',
+        evidence: 'Public check passed.',
+      },
       { id: 'verify', content: 'Run public checks', status: 'pending', priority: 'high' },
     ]);
     const exported = taskRunExportFromProjection(projectTaskRun(events, 'run-heavy-complete'));
@@ -708,6 +668,22 @@ describe('task run export', () => {
 function heavyTaskCompletionEvents(todos: HeavyTaskTodoItem[] = [
   { id: 'edit', content: 'Patch implementation', status: 'completed', priority: 'high' },
   {
+    id: 'artifact',
+    kind: 'runnable_artifact',
+    content: 'Create first runnable artifact',
+    status: 'completed',
+    priority: 'high',
+    evidence: 'Runnable artifact exists in public workspace.',
+  },
+  {
+    id: 'check',
+    kind: 'public_check',
+    content: 'Run public check',
+    status: 'completed',
+    priority: 'high',
+    evidence: 'Public check passed.',
+  },
+  {
     id: 'optional-polish',
     content: 'Optional polish',
     status: 'cancelled',
@@ -768,23 +744,6 @@ function heavyTaskCompletionEvents(todos: HeavyTaskTodoItem[] = [
         source: { kind: 'model_tool', toolCallId: 'tool-self-check' },
       },
     },
-    completionEvidenceEvent(taskRunId, 'hc4a', 'e-check-edit', { todoIds: ['edit'], checkIds: ['check-edit'], ts: 4.1 }),
-    completionEvidenceEvent(taskRunId, 'hc4b', 'e-optional-polish', { todoIds: ['optional-polish'], ts: 4.2, toolName: 'Read' }),
-    completionEngineeringEvent(taskRunId, 'hc4c', completionCheckRecord(taskRunId, {
-      recordId: 'record-check-edit',
-      checkId: 'check-edit',
-      todoIds: ['edit'],
-      evidenceIds: ['e-check-edit'],
-      ts: 4.3,
-    })),
-    completionEngineeringEvent(taskRunId, 'hc4d', completionPatchRecord(taskRunId, {
-      recordId: 'record-optional-polish',
-      todoIds: ['optional-polish'],
-      evidenceIds: ['e-optional-polish'],
-      changedFiles: ['README.md'],
-      status: 'abandoned',
-      ts: 4.4,
-    })),
     {
       type: 'verifier_result_recorded',
       id: 'hc5',
@@ -826,191 +785,4 @@ function heavyTaskCompletionEvents(todos: HeavyTaskTodoItem[] = [
       error: { message: 'runtime step cap reached', class: 'max_steps' },
     },
   ];
-}
-
-function completionEvidenceEvent(
-  taskRunId: string,
-  id: string,
-  evidenceId: string,
-  options: { todoIds?: string[]; checkIds?: string[]; ts: number; toolName?: 'Bash' | 'Read' },
-): TaskEvent {
-  return {
-    type: 'heavy_task_evidence_recorded',
-    id,
-    taskRunId,
-    ts: options.ts,
-    evidence: {
-      schemaVersion: 1,
-      evidenceId,
-      taskRunId,
-      ts: options.ts,
-      kind: 'tool',
-      public: true,
-      source: { kind: 'model_tool', toolCallId: `tool-${evidenceId}`, toolName: options.toolName ?? 'Bash' },
-      tool: {
-        name: options.toolName ?? 'Bash',
-        inputSummary: options.toolName === 'Read' ? { path: 'README.md' } : { command: 'npm test' },
-        exitCode: options.toolName === 'Read' ? undefined : 0,
-        ok: true,
-        outputs: [{
-          stream: options.toolName === 'Read' ? 'content' : 'stdout',
-          excerpt: 'bounded public summary',
-          truncated: false,
-        }],
-        diff: { status: 'not_applicable' },
-      },
-      links: {
-        ...(options.todoIds ? { todoIds: options.todoIds } : {}),
-        ...(options.checkIds ? { checkIds: options.checkIds } : {}),
-      },
-    },
-  };
-}
-
-function completionEngineeringEvent(taskRunId: string, id: string, record: HeavyTaskEngineeringRecord): TaskEvent {
-  return {
-    type: 'heavy_task_engineering_recorded',
-    id,
-    taskRunId,
-    ts: record.ts,
-    record,
-  };
-}
-
-function completionCheckRecord(taskRunId: string, input: {
-  recordId: string;
-  checkId: string;
-  todoIds: string[];
-  evidenceIds: string[];
-  ts: number;
-}): HeavyTaskEngineeringRecord {
-  return {
-    schemaVersion: 1,
-    recordId: input.recordId,
-    taskRunId,
-    ts: input.ts,
-    kind: 'targeted_check',
-    title: 'Run public targeted check',
-    summary: 'Public targeted check passed.',
-    status: 'passed',
-    completeness: 'complete',
-    source: { kind: 'model_tool', toolCallId: `tool-${input.recordId}`, toolName: 'check_record' },
-    links: {
-      todoIds: input.todoIds,
-      evidenceIds: input.evidenceIds,
-      toolCallIds: [`tool-${input.recordId}`],
-      checkIds: [input.checkId],
-      artifactIds: [],
-      changedFiles: [],
-      patchIds: [],
-      hypothesisIds: [],
-      repairIds: [],
-    },
-    targetedCheck: {
-      checkId: input.checkId,
-      command: 'npm test',
-      expectedSignal: 'public tests pass',
-      observedSignal: 'public tests passed',
-      result: 'pass',
-    },
-  };
-}
-
-function completionPatchRecord(taskRunId: string, input: {
-  recordId: string;
-  todoIds: string[];
-  evidenceIds: string[];
-  changedFiles: string[];
-  status?: HeavyTaskEngineeringRecord['status'];
-  ts: number;
-}): HeavyTaskEngineeringRecord {
-  const patchId = `patch-${input.recordId}`;
-  return {
-    schemaVersion: 1,
-    recordId: input.recordId,
-    taskRunId,
-    ts: input.ts,
-    kind: 'patch',
-    title: 'Record public patch decision',
-    summary: 'Public patch record with compact evidence links.',
-    status: input.status ?? 'passed',
-    completeness: 'complete',
-    source: { kind: 'model_tool', toolCallId: `tool-${input.recordId}`, toolName: 'engineering_record' },
-    links: {
-      todoIds: input.todoIds,
-      evidenceIds: input.evidenceIds,
-      toolCallIds: [`tool-${input.recordId}`],
-      checkIds: [],
-      artifactIds: [],
-      changedFiles: input.changedFiles,
-      patchIds: [patchId],
-      hypothesisIds: [],
-      repairIds: [],
-    },
-    patch: {
-      patchId,
-      changedFiles: input.changedFiles,
-      changeSummary: 'Changed public source file.',
-      mutationEvidenceIds: input.evidenceIds,
-    },
-  };
-}
-
-function engineeringRecord(
-  taskRunId: string,
-  recordId: string,
-  completeness: HeavyTaskEngineeringRecord['completeness'],
-): HeavyTaskEngineeringRecord {
-  return {
-    schemaVersion: 1,
-    recordId,
-    taskRunId,
-    ts: recordId === 'record-1' ? 2 : 3,
-    kind: 'patch',
-    title: 'Patch public source',
-    summary: completeness === 'complete'
-      ? 'Changed src/app.js and linked compact mutation evidence.'
-      : 'Patch summary is intentionally incomplete until the next public check.',
-    status: completeness === 'complete' ? 'passed' : 'running',
-    completeness,
-    ...(completeness === 'incomplete' ? { incompleteReason: 'Follow-up public check has not been recorded yet.' } : {}),
-    source: { kind: 'model_tool', toolCallId: `tool-${recordId}`, toolName: 'engineering_record' },
-    links: {
-      todoIds: completeness === 'complete' ? ['todo-export'] : [],
-      evidenceIds: completeness === 'complete' ? ['evidence-export'] : [],
-      toolCallIds: [],
-      checkIds: [],
-      artifactIds: [],
-      changedFiles: ['src/app.js'],
-      patchIds: [`patch-${recordId}`],
-      hypothesisIds: [],
-      repairIds: [],
-    },
-    patch: {
-      patchId: `patch-${recordId}`,
-      changedFiles: ['src/app.js'],
-      changeSummary: 'Changed a public source file without embedding raw stdout or diff output.',
-      mutationEvidenceIds: completeness === 'complete' ? ['evidence-export'] : [],
-    },
-  };
-}
-
-function engineeringEvidenceEvent(taskRunId: string): TaskEvent {
-  const evidence: HeavyTaskCompactEvidenceEnvelope = {
-    schemaVersion: 1,
-    evidenceId: 'evidence-export',
-    taskRunId,
-    ts: 1.75,
-    kind: 'tool',
-    public: true,
-    source: { kind: 'model_tool', toolCallId: 'tool-edit', toolName: 'Edit' },
-    tool: {
-      name: 'Edit',
-      inputSummary: { path: 'src/app.js' },
-      ok: true,
-      outputs: [{ stream: 'diff', excerpt: 'bounded public edit summary', truncated: false }],
-      diff: { status: 'not_captured', files: [{ path: 'src/app.js' }] },
-    },
-  };
-  return { type: 'heavy_task_evidence_recorded', id: 'e-evidence', taskRunId, ts: 1.75, evidence };
 }

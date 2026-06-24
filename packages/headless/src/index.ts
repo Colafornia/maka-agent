@@ -1,134 +1,13 @@
 // Public surface of @maka/headless. Deliberately curated — the workspace copy
-// (sandbox.ts), the verification runner (evaluator.ts), and the backend wiring
-// (backends.ts) are internals the runner owns, not part of the API. Minimal
-// usage is `runExperiment(config, task, { storageRoot })`.
+// (sandbox.ts), the verification runner (evaluator.ts), backend wiring
+// (backends.ts), Harbor cells, and RSI controller internals are owned by
+// package-local entrypoints, not the root API. Minimal usage is
+// `runExperiment(config, task, { storageRoot })`.
+export { runPromptOptimizationRun } from './prompt-optimization-run.js';
 export type {
-  HarborCellOutput,
-  HarborCellRuntimeRefs,
-  HarborCellTokenSummary,
-  HarborCellToolSummary,
-} from './cell-output.js';
-export {
-  HARBOR_CELL_OUTPUT_SCHEMA_VERSION,
-  buildHarborCellOutput,
-  summarizeCellTokens,
-  summarizeCellTools,
-  validateHarborCellOutput,
-} from './cell-output.js';
-export type {
-  RunHarborCellEnv,
-  RunHarborCellFromEnvOptions,
-  RunHarborCellInput,
-  RunHarborCellResult,
-} from './harbor-cell.js';
-export {
-  buildAiSdkCellBackendRegistration,
-  buildHarborCellAiSdkTools,
-  createHarborCellLocalToolExecutor,
-  HARBOR_CELL_OUTPUT_FILENAME,
-  HARBOR_CELL_RUNTIME_EVENTS_FILENAME,
-  runHarborCell,
-  runHarborCellFromEnv,
-} from './harbor-cell.js';
-export type {
-  HarborOfficialArtifactInput,
-  ReadHarborOfficialArtifactInput,
-} from './harbor-official-artifacts.js';
-export {
-  harborOfficialVerifierOutputFromArtifacts,
-  readHarborOfficialVerifierOutput,
-} from './harbor-official-artifacts.js';
-export type {
-  FixedPromptControllerStopReason,
-  FixedPromptControllerResult,
-  FixedPromptTask,
-  FixedPromptTaskCompletedEvent,
-  FixedPromptTaskInfraFailedEvent,
-  FixedPromptTaskPlumbingFailedEvent,
-  FixedPromptTaskWalEvent,
-  FixedPromptWalEvent,
-  HarborTaskRunInput,
-  HarborTaskRunOutput,
-  HarborTaskRunner,
-  PromptCandidateCommittedEvent,
-  PromptCandidateDecisionEvent,
-  PromptCandidateRewardHackScan,
-  ReadHarborTaskRunOutputInput,
-  RunFixedPromptControllerInput,
-} from './fixed-prompt-controller.js';
-export {
-  FIXED_PROMPT_WAL_SCHEMA_VERSION,
-  appendFixedPromptWalEvent,
-  hashSystemPrompt,
-  readHarborTaskRunOutput,
-  readFixedPromptWal,
-  runFixedPromptController,
-  writeFixedPromptResultsTsv,
-} from './fixed-prompt-controller.js';
-export type {
-  MetaAgent,
-  MetaAgentPromptInput,
-  MetaAgentPromptResult,
-  ExtractTrajectoryDigestInput,
-  CreateScriptedMetaAgentInput,
-  CreateCliPromptCandidateGitInput,
-  MetaAgentCompletion,
-  MetaAgentCompletionInput,
-  PromptCandidateGit,
-  PromptCandidateRoundResult,
-  RewardHackScanInput,
-  RewardHackScanResult,
-  RunPromptCandidateRoundInput,
-  TrajectoryDigest,
-  TrajectoryToolCallDigest,
-} from './prompt-candidate-loop.js';
-export {
-  assertOnlySystemPromptChanged,
-  createCliPromptCandidateGit,
-  createScriptedMetaAgent,
-  extractTrajectoryDigest,
-  parseMetaAgentResult,
-  renderMetaAgentPrompt,
-  runPromptCandidateRound,
-  scanRuntimeEventsForRewardHack,
-} from './prompt-candidate-loop.js';
-export type {
-  AppendPromptAcceptanceDecisionInput,
-  CalibratePromptAcceptanceBaselineInput,
-  DecidePromptAcceptanceInput,
-  PromptAcceptanceBaseline,
-  PromptAcceptanceBaselinePartition,
-  PromptAcceptanceBaselineRun,
-  PromptAcceptanceDecision,
-  PromptAcceptanceMetrics,
-  PromptAcceptanceNoiseBandInput,
-  PromptAcceptancePartitionSummary,
-  PromptAcceptanceReason,
-  PromptAcceptanceResult,
-  PromptAcceptanceState,
-  SelectStablePromptTasksInput,
-  StablePromptTaskRejectionReason,
-  StablePromptTaskSelectionResult,
-} from './prompt-acceptance-policy.js';
-export {
-  PROMPT_REWARD_HACK_QUARANTINE_REASON,
-  appendPromptAcceptanceDecision,
-  calibratePromptAcceptanceBaseline,
-  decidePromptAcceptance,
-  promptAcceptanceNoiseBand,
-  promptAcceptanceStateFromWal,
-  selectStablePromptTasks,
-  summarizePromptAcceptancePartition,
-} from './prompt-acceptance-policy.js';
-export type {
-  PromptStructuralSmokeFailure,
-  PromptStructuralSmokeReport,
-  PromptStructuralSmokeReportInput,
-} from './prompt-structural-smoke.js';
-export {
-  promptStructuralSmokeReport,
-  renderPromptStructuralSmokeMarkdown,
-} from './prompt-structural-smoke.js';
+  PromptOptimizationRunInput,
+  PromptOptimizationRunResult,
+} from './prompt-optimization-run.js';
 export type {
   BenchmarkAdapter,
   BenchmarkAdapterRegistry,
@@ -158,11 +37,6 @@ export type {
   FeedbackObservation,
   HeavyTaskCompactEvidenceEnvelope,
   HeavyTaskDiffSummary,
-  HeavyTaskEngineeringCompleteness,
-  HeavyTaskEngineeringLinks,
-  HeavyTaskEngineeringRecord,
-  HeavyTaskEngineeringRecordKind,
-  HeavyTaskEngineeringRecordRecordedEvent,
   HeavyTaskEvidenceKind,
   HeavyTaskEvidenceRecordedEvent,
   HeavyTaskOutputSummary,
@@ -341,28 +215,6 @@ export {
   validateHeavyTaskPublicSelfCheck,
 } from './heavy-task-self-check.js';
 export type {
-  CheckRecordSubmitInput,
-  EngineeringRecordSubmitInput,
-  HeavyTaskEngineeringArtifactLink,
-  HeavyTaskEngineeringEvent,
-  HeavyTaskEngineeringRecorder,
-  HeavyTaskEngineeringRecordResult,
-} from './heavy-task-engineering.js';
-export {
-  buildHeavyTaskEngineeringTools,
-  checkRecordSubmitSchema,
-  compactHeavyTaskEngineeringState,
-  createHeavyTaskEngineeringRecorder,
-  DEFAULT_EXPORT_ENGINEERING_LIMIT,
-  DEFAULT_PROMPT_ENGINEERING_LIMIT,
-  engineeringRecordSubmitSchema,
-  HEAVY_TASK_ENGINEERING_SCHEMA_VERSION,
-  HEAVY_TASK_ENGINEERING_TOOL_NAMES,
-  isPublicHeavyTaskEngineeringRecord,
-  renderHeavyTaskEngineeringForPrompt,
-  resolveHeavyTaskEngineeringRecordLinks,
-} from './heavy-task-engineering.js';
-export type {
   CompactTextEvidenceOptions,
   HeavyTaskCompactEvidenceInput,
   HeavyTaskEvidenceRecorder,
@@ -383,9 +235,6 @@ export {
 export type {
   HeavyTaskCompletionInput,
   HeavyTaskCompletionStatus,
-  HeavyTaskEvidenceChainItem,
-  HeavyTaskEvidenceChainOutcome,
-  HeavyTaskEvidenceChainSummary,
   HeavyTaskRuntimeCapKind,
   HeavyTaskSemanticStatus,
 } from './heavy-task-finalization.js';

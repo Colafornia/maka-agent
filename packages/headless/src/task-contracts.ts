@@ -312,6 +312,7 @@ export interface HeavyTaskInventoryState {
 export interface HeavyTaskTodoItem {
   id: string;
   content: string;
+  kind?: 'inspect' | 'implement' | 'runnable_artifact' | 'public_check' | 'repair' | 'final_self_check';
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
   priority: 'high' | 'medium' | 'low';
   evidence?: string;
@@ -443,71 +444,6 @@ export interface HeavyTaskCompactEvidenceEnvelope {
     checkIds?: string[];
     artifactIds?: string[];
     runtimeEventIds?: string[];
-  };
-}
-
-export type HeavyTaskEngineeringRecordKind =
-  | 'hypothesis'
-  | 'targeted_check'
-  | 'repair'
-  | 'patch';
-
-export type HeavyTaskEngineeringCompleteness = 'complete' | 'incomplete';
-
-export interface HeavyTaskEngineeringLinks {
-  todoIds: string[];
-  evidenceIds: string[];
-  toolCallIds: string[];
-  checkIds: string[];
-  artifactIds: string[];
-  changedFiles: string[];
-  patchIds: string[];
-  hypothesisIds: string[];
-  repairIds: string[];
-}
-
-export interface HeavyTaskEngineeringRecord {
-  schemaVersion: 1;
-  recordId: string;
-  taskRunId: string;
-  attemptId?: string;
-  ts: number;
-  kind: HeavyTaskEngineeringRecordKind;
-  title: string;
-  summary: string;
-  status: 'proposed' | 'running' | 'passed' | 'failed' | 'repaired' | 'superseded' | 'abandoned';
-  completeness: HeavyTaskEngineeringCompleteness;
-  incompleteReason?: string;
-  source: HeavyTaskProgressSource & { toolName: 'engineering_record' | 'check_record' };
-  links: HeavyTaskEngineeringLinks;
-  hypothesis?: {
-    expectedSignal: string;
-    rationaleEvidenceIds: string[];
-  };
-  targetedCheck?: {
-    checkId: string;
-    command?: string;
-    expectedSignal: string;
-    observedSignal: string;
-    result: 'pass' | 'fail' | 'inconclusive';
-  };
-  repair?: {
-    failedCheckIds: string[];
-    hypothesisId?: string;
-    repairStrategy: string;
-    outcome: 'not_checked' | 'check_passed' | 'check_failed' | 'inconclusive';
-  };
-  patch?: {
-    patchId: string;
-    changedFiles: string[];
-    changeSummary: string;
-    mutationEvidenceIds: string[];
-  };
-  projection?: {
-    missingTodoIds: string[];
-    missingEvidenceIds: string[];
-    missingArtifactIds: string[];
-    missingCheckIds: string[];
   };
 }
 
@@ -733,11 +669,6 @@ export interface HeavyTaskEvidenceRecordedEvent extends BaseTaskEvent {
   evidence: HeavyTaskCompactEvidenceEnvelope;
 }
 
-export interface HeavyTaskEngineeringRecordRecordedEvent extends BaseTaskEvent {
-  type: 'heavy_task_engineering_recorded';
-  record: HeavyTaskEngineeringRecord;
-}
-
 export interface WorkspaceLeaseRecordedEvent extends BaseTaskEvent {
   type: 'workspace_lease_recorded';
   lease: WorkspaceLeaseFacts;
@@ -866,7 +797,6 @@ export type TaskEvent =
   | HeavyTaskTodosRecordedEvent
   | HeavyTaskSelfCheckRecordedEvent
   | HeavyTaskEvidenceRecordedEvent
-  | HeavyTaskEngineeringRecordRecordedEvent
   | IsolationPolicyRecordedEvent
   | WorkspaceLeaseRecordedEvent
   | ToolExecutorIdentityRecordedEvent

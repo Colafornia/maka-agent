@@ -242,6 +242,68 @@ describe('fixed prompt controller', () => {
     });
   });
 
+  test('retries a thrown infra error once and records the successful retry', async () => {
+    await withDir(async (dir) => {
+      const systemPromptPath = join(dir, 'system_prompt.md');
+      const resultsJsonlPath = join(dir, 'results.jsonl');
+      await writeFile(systemPromptPath, 'fixed prompt\n', 'utf8');
+
+      let attempts = 0;
+      const result = await runFixedPromptController({
+        runId: 'run-1',
+        roundId: 'round-1',
+        config,
+        systemPromptPath,
+        resultsJsonlPath,
+        resultsTsvPath: join(dir, 'results.tsv'),
+        tasks: [{ id: 'task-a', path: '/bench/task-a' }],
+        harborRunner: async ({ task }) => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('transient container build hiccup');
+          return harborOutput({ taskId: task.id });
+        },
+        now: () => 100,
+        newId: idFactory(),
+      });
+
+      assert.equal(attempts, 2); // failed once, retried once
+      assert.equal(result.events.length, 1);
+      assert.equal(result.events[0]?.type, 'task_completed');
+      const wal = await readFile(resultsJsonlPath, 'utf8');
+      assert.match(wal, /"type":"task_completed"/);
+      assert.doesNotMatch(wal, /"type":"task_infra_failed"/);
+    });
+  });
+
+  test('records task_infra_failed only after the retry also throws', async () => {
+    await withDir(async (dir) => {
+      const systemPromptPath = join(dir, 'system_prompt.md');
+      const resultsJsonlPath = join(dir, 'results.jsonl');
+      await writeFile(systemPromptPath, 'fixed prompt\n', 'utf8');
+
+      let attempts = 0;
+      const result = await runFixedPromptController({
+        runId: 'run-1',
+        roundId: 'round-1',
+        config,
+        systemPromptPath,
+        resultsJsonlPath,
+        resultsTsvPath: join(dir, 'results.tsv'),
+        tasks: [{ id: 'task-a', path: '/bench/task-a' }],
+        harborRunner: async () => {
+          attempts += 1;
+          throw new Error('container crashed both times');
+        },
+        now: () => 100,
+        newId: idFactory(),
+      });
+
+      assert.equal(attempts, 2);
+      assert.equal(result.events.length, 1);
+      assert.equal(result.events[0]?.type, 'task_infra_failed');
+    });
+  });
+
   test('stops when infra failures exceed the configured rate', async () => {
     await withDir(async (dir) => {
       const systemPromptPath = join(dir, 'system_prompt.md');
@@ -272,7 +334,9 @@ describe('fixed prompt controller', () => {
         newId: idFactory(),
       });
 
-      assert.deepEqual(calls, ['task-a', 'task-b']);
+      // Each failing task is retried once before being recorded, so it is
+      // attempted twice; we still stop after task-b and never reach c/d/e.
+      assert.deepEqual([...new Set(calls)], ['task-a', 'task-b']);
       assert.equal(result.stopReason, 'infra_failure_rate_exceeded');
       assert.deepEqual(result.taskIds, ['task-a', 'task-b']);
       assert.equal((await readFile(resultsJsonlPath, 'utf8')).trimEnd().split('\n').length, 2);
@@ -317,9 +381,76 @@ describe('fixed prompt controller', () => {
       });
 
       assert.equal(maxInFlight, 1);
-      assert.deepEqual(calls, ['task-a', 'task-b']);
+      assert.deepEqual([...new Set(calls)], ['task-a', 'task-b']);
       assert.equal(result.stopReason, 'infra_failure_rate_exceeded');
       assert.deepEqual(result.taskIds, ['task-a', 'task-b']);
+    });
+  });
+
+  test('rejects out-of-contract guard knobs instead of silently disabling them', async () => {
+    await withDir(async (dir) => {
+      const systemPromptPath = join(dir, 'system_prompt.md');
+      await writeFile(systemPromptPath, 'fixed prompt\n', 'utf8');
+      const base = {
+        runId: 'run-1',
+        roundId: 'round-1',
+        config,
+        systemPromptPath,
+        resultsJsonlPath: join(dir, 'results.jsonl'),
+        resultsTsvPath: join(dir, 'results.tsv'),
+        tasks: [{ id: 'task-a', path: '/bench/task-a' }],
+        harborRunner: async () => { throw new Error('should not run'); },
+        now: () => 100,
+        newId: idFactory(),
+      };
+      await assert.rejects(
+        runFixedPromptController({ ...base, maxConcurrency: 1.5 }),
+        /maxConcurrency must be a positive integer/,
+      );
+      // Caught even when a stop guard would force the effective concurrency to 1.
+      await assert.rejects(
+        runFixedPromptController({ ...base, maxConcurrency: 1.5, costCeilingUsd: 10 }),
+        /maxConcurrency must be a positive integer/,
+      );
+      await assert.rejects(
+        runFixedPromptController({ ...base, costCeilingUsd: NaN }),
+        /costCeilingUsd must be a finite positive number/,
+      );
+      await assert.rejects(
+        runFixedPromptController({ ...base, maxInfraFailureRate: 0 }),
+        /maxInfraFailureRate must be a number in \(0, 1\]/,
+      );
+    });
+  });
+
+  test('rejects duplicate task ids before running Harbor', async () => {
+    await withDir(async (dir) => {
+      const systemPromptPath = join(dir, 'system_prompt.md');
+      await writeFile(systemPromptPath, 'fixed prompt\n', 'utf8');
+      const calls: string[] = [];
+
+      await assert.rejects(
+        runFixedPromptController({
+          runId: 'run-1',
+          roundId: 'round-1',
+          config,
+          systemPromptPath,
+          resultsJsonlPath: join(dir, 'results.jsonl'),
+          resultsTsvPath: join(dir, 'results.tsv'),
+          tasks: [
+            { id: 'task-a', path: '/bench/task-a' },
+            { id: 'task-a', path: '/bench/task-a-copy' },
+          ],
+          harborRunner: async ({ task }) => {
+            calls.push(task.id);
+            return harborOutput({ taskId: task.id });
+          },
+          now: () => 100,
+          newId: idFactory(),
+        }),
+        /tasks contain duplicate id\(s\): task-a/,
+      );
+      assert.deepEqual(calls, []);
     });
   });
 
@@ -664,6 +795,7 @@ function taskCompletedEvent(input: { taskId: string; promptHash?: string }): Fix
     steps: 4,
     durationMs: 50,
     runtimeEventsPath: `/logs/${input.taskId}/runtime-events.jsonl`,
+    traceEventsPath: `/logs/${input.taskId}/events.jsonl`,
     harbor: { reward: 1 },
   };
 }
@@ -699,6 +831,7 @@ function harborOutput(input: {
       schemaVersion: 1,
       status: 'completed',
       runtimeEventsPath: `/logs/${input.taskId}/runtime-events.jsonl`,
+      traceEventsPath: `/logs/${input.taskId}/events.jsonl`,
       ...(input.omitPromptHash ? {} : { promptHash: input.promptHash ?? hashSystemPrompt('fixed prompt\n') }),
       tokenSummary: input.tokenSummary ?? tokenSummary({ input: 1, output: 2, reasoning: 0, total: 3, costUsd: 0.02 }),
       toolSummary: {

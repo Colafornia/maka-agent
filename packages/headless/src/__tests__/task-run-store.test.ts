@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import type { HeavyTaskEngineeringRecord, HeavyTaskSemanticSelfCheckState, TaskEvent } from '../task-contracts.js';
+import type { HeavyTaskSemanticSelfCheckState, TaskEvent } from '../task-contracts.js';
 import { createInMemoryTaskRunStore, createTaskRunStore, projectTaskRun } from '../task-run-store.js';
 
 function eventIdFactory(): () => string {
@@ -63,7 +63,6 @@ function heavyTaskEvidenceEvent(
   evidenceId: string,
   name: 'Bash' | 'Read',
   ts: number,
-  links: { todoIds?: string[]; checkIds?: string[]; artifactIds?: string[] } = {},
 ): TaskEvent {
   return {
     type: 'heavy_task_evidence_recorded',
@@ -93,100 +92,6 @@ function heavyTaskEvidenceEvent(
         }],
         diff: { status: 'not_applicable' },
       },
-      ...(Object.keys(links).length > 0 ? { links } : {}),
-    },
-  };
-}
-
-function heavyTaskEngineeringRecordEvent(
-  taskRunId: string,
-  id: string,
-  record: HeavyTaskEngineeringRecord,
-): TaskEvent {
-  return {
-    type: 'heavy_task_engineering_recorded',
-    id,
-    taskRunId,
-    ts: record.ts,
-    record,
-  };
-}
-
-function targetedCheckRecord(taskRunId: string, input: {
-  recordId: string;
-  checkId: string;
-  todoIds: string[];
-  evidenceIds: string[];
-  ts: number;
-}): HeavyTaskEngineeringRecord {
-  return {
-    schemaVersion: 1,
-    recordId: input.recordId,
-    taskRunId,
-    ts: input.ts,
-    kind: 'targeted_check',
-    title: 'Run public targeted check',
-    summary: 'Public check passed.',
-    status: 'passed',
-    completeness: 'complete',
-    source: { kind: 'model_tool', toolCallId: `tool-${input.recordId}`, toolName: 'check_record' },
-    links: {
-      todoIds: input.todoIds,
-      evidenceIds: input.evidenceIds,
-      toolCallIds: [`tool-${input.recordId}`],
-      checkIds: [input.checkId],
-      artifactIds: [],
-      changedFiles: [],
-      patchIds: [],
-      hypothesisIds: [],
-      repairIds: [],
-    },
-    targetedCheck: {
-      checkId: input.checkId,
-      command: 'npm test',
-      expectedSignal: 'public checks pass',
-      observedSignal: 'public checks passed',
-      result: 'pass',
-    },
-  };
-}
-
-function patchRecord(taskRunId: string, input: {
-  recordId: string;
-  todoIds: string[];
-  evidenceIds: string[];
-  changedFiles: string[];
-  status?: HeavyTaskEngineeringRecord['status'];
-  ts: number;
-}): HeavyTaskEngineeringRecord {
-  const patchId = `patch-${input.recordId}`;
-  return {
-    schemaVersion: 1,
-    recordId: input.recordId,
-    taskRunId,
-    ts: input.ts,
-    kind: 'patch',
-    title: 'Record public patch decision',
-    summary: 'Public patch record with compact evidence links.',
-    status: input.status ?? 'passed',
-    completeness: 'complete',
-    source: { kind: 'model_tool', toolCallId: `tool-${input.recordId}`, toolName: 'engineering_record' },
-    links: {
-      todoIds: input.todoIds,
-      evidenceIds: input.evidenceIds,
-      toolCallIds: [`tool-${input.recordId}`],
-      checkIds: [],
-      artifactIds: [],
-      changedFiles: input.changedFiles,
-      patchIds: [patchId],
-      hypothesisIds: [],
-      repairIds: [],
-    },
-    patch: {
-      patchId,
-      changedFiles: input.changedFiles,
-      changeSummary: 'Changed public source file.',
-      mutationEvidenceIds: input.evidenceIds,
     },
   };
 }
@@ -479,6 +384,22 @@ describe('TaskRunStore', () => {
           ts: 3,
           items: [
             { id: 'edit', content: 'Patch implementation', status: 'completed', priority: 'high' },
+            {
+              id: 'artifact',
+              kind: 'runnable_artifact',
+              content: 'Create first runnable artifact',
+              status: 'completed',
+              priority: 'high',
+              evidence: 'Runnable artifact exists.',
+            },
+            {
+              id: 'check',
+              kind: 'public_check',
+              content: 'Run public check',
+              status: 'completed',
+              priority: 'high',
+              evidence: 'Public check passed.',
+            },
             { id: 'optional', content: 'Optional polish', status: 'cancelled', priority: 'low', evidence: 'Not required by public task.' },
           ],
           source: { kind: 'model_tool', toolCallId: 'tool-2' },
@@ -491,23 +412,6 @@ describe('TaskRunStore', () => {
         ts: 4,
         selfCheck: acceptedSelfCheck(taskRunId, 'self-check-1', 'pass', 'npm test passed against public files.'),
       },
-      heavyTaskEvidenceEvent(taskRunId, 'e-4a', 'e-check-edit', 'Bash', 4.1, { todoIds: ['edit'], checkIds: ['check-edit'] }),
-      heavyTaskEvidenceEvent(taskRunId, 'e-4b', 'e-optional', 'Read', 4.2, { todoIds: ['optional'] }),
-      heavyTaskEngineeringRecordEvent(taskRunId, 'e-4c', targetedCheckRecord(taskRunId, {
-        recordId: 'record-check-edit',
-        checkId: 'check-edit',
-        todoIds: ['edit'],
-        evidenceIds: ['e-check-edit'],
-        ts: 4.3,
-      })),
-      heavyTaskEngineeringRecordEvent(taskRunId, 'e-4d', patchRecord(taskRunId, {
-        recordId: 'record-optional',
-        todoIds: ['optional'],
-        evidenceIds: ['e-optional'],
-        changedFiles: ['README.md'],
-        status: 'abandoned',
-        ts: 4.4,
-      })),
       {
         type: 'score_result_recorded',
         id: 'e-5',
@@ -537,8 +441,6 @@ describe('TaskRunStore', () => {
     assert.equal(projection.heavyTaskCompletion?.runtime.taxonomy, 'verification_failed');
     assert.equal(projection.heavyTaskCompletion?.runtime.capKind, 'runtime_step_cap');
     assert.equal(projection.heavyTaskCompletion?.semantic.status, 'complete');
-    assert.equal(projection.heavyTaskCompletion?.semantic.evidenceChain.outcome, 'complete');
-    assert.deepEqual(projection.heavyTaskCompletion?.semantic.evidenceChain.nonblockingItemIds, ['todo:optional']);
     assert.deepEqual(projection.heavyTaskCompletion?.semantic.nonblockingTodoIds, ['optional']);
     assert.equal(projection.heavyTaskCompletion?.finalization.eligible, true);
     assert.equal(projection.result?.taxonomy, 'verification_failed');

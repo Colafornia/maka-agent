@@ -124,14 +124,12 @@ describe('isolated headless tools', () => {
     assert.ok(!names.includes('inventory_submit'));
     assert.ok(!names.includes('todo_update'));
     assert.ok(!names.includes('self_check_submit'));
-    assert.ok(!names.includes('engineering_record'));
-    assert.ok(!names.includes('check_record'));
     assert.equal(names.filter((name) => name === 'Bash').length, 1);
     assert.deepEqual(buildChildAgentTools(tools).map((tool) => tool.name), ['Read', 'Glob', 'Grep']);
     assert.ok(!buildChildAgentTools(tools).some((tool) => ['Bash', 'Write', 'Edit'].includes(tool.name)));
   });
 
-  test('progress, self-check, and engineering tools are included only when heavy-task recorders are enabled', () => {
+  test('progress and self-check tools are included only when heavy-task recorders are enabled', () => {
     const tools = buildIsolatedHeadlessTools({
       async exec() {
         return { exitCode: 0, stdout: '', stderr: '' };
@@ -184,88 +182,14 @@ describe('isolated headless tools', () => {
           };
         },
       },
-      heavyTaskEngineering: {
-        async recordEngineering() {
-          return {
-            accepted: true,
-            complete: true,
-            missingLinks: [],
-            record: {
-              schemaVersion: 1,
-              recordId: 'record-1',
-              taskRunId: 'run-1',
-              ts: 1,
-              kind: 'hypothesis',
-              title: 'Hypothesis',
-              summary: 'A public hypothesis',
-              status: 'proposed',
-              completeness: 'complete',
-              source: { kind: 'model_tool', toolCallId: 'tool-1', toolName: 'engineering_record' },
-              links: {
-                todoIds: ['todo-1'],
-                evidenceIds: ['evidence-1'],
-                toolCallIds: [],
-                checkIds: [],
-                artifactIds: [],
-                changedFiles: [],
-                patchIds: [],
-                hypothesisIds: [],
-                repairIds: [],
-              },
-              hypothesis: {
-                expectedSignal: 'public check identifies the problem',
-                rationaleEvidenceIds: ['evidence-1'],
-              },
-            },
-          };
-        },
-        async recordCheck() {
-          return {
-            accepted: true,
-            complete: true,
-            missingLinks: [],
-            checkId: 'check-1',
-            record: {
-              schemaVersion: 1,
-              recordId: 'record-2',
-              taskRunId: 'run-1',
-              ts: 1,
-              kind: 'targeted_check',
-              title: 'Check',
-              summary: 'A public check',
-              status: 'passed',
-              completeness: 'complete',
-              source: { kind: 'model_tool', toolCallId: 'tool-1', toolName: 'check_record' },
-              links: {
-                todoIds: ['todo-1'],
-                evidenceIds: ['evidence-1'],
-                toolCallIds: ['tool-1'],
-                checkIds: ['check-1'],
-                artifactIds: [],
-                changedFiles: [],
-                patchIds: [],
-                hypothesisIds: [],
-                repairIds: [],
-              },
-              targetedCheck: {
-                checkId: 'check-1',
-                command: 'npm test',
-                expectedSignal: 'pass',
-                observedSignal: 'pass',
-                result: 'pass',
-              },
-            },
-          };
-        },
-      },
     });
 
     const names = tools.map((tool) => tool.name);
     assert.ok(names.includes('inventory_submit'));
     assert.ok(names.includes('todo_update'));
     assert.ok(names.includes('self_check_submit'));
-    assert.ok(names.includes('engineering_record'));
-    assert.ok(names.includes('check_record'));
+    assert.ok(!names.includes('engineering_record'));
+    assert.ok(!names.includes('check_record'));
   });
 
   test('Read, Write, Glob, and Grep delegate to native isolated executor methods', async () => {
@@ -454,6 +378,148 @@ describe('isolated headless tools', () => {
     assert.ok(calls.length >= 4);
     assert.ok(calls.every((command) => command.startsWith("sh -c '")));
     assert.ok(calls.every((command) => !command.includes('node -e')));
+  });
+
+  test('Grep prefers ripgrep when on PATH and skips binary files', async (t) => {
+    try {
+      await execAsync('rg --version', { env: process.env });
+    } catch {
+      t.skip('ripgrep not installed');
+      return;
+    }
+    const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-grep-rg-'));
+    await mkdir(join(cwd, 'src'));
+    await writeFile(join(cwd, 'src', 'file.txt'), 'hello\nneedle\n', 'utf8');
+    // A binary file that contains the needle: ripgrep detects the NUL bytes and
+    // skips it, where the find/awk fallback would match its bytes. A clean
+    // result therefore proves the ripgrep path ran.
+    await writeFile(join(cwd, 'src', 'data.bin'), Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from('needle\n')]));
+    const tools = buildIsolatedHeadlessTools({
+      async exec(input) {
+        try {
+          const { stdout, stderr } = await execAsync(input.command, {
+            cwd: input.cwd,
+            env: process.env, // full PATH so rg resolves
+            maxBuffer: 1024 * 1024,
+          });
+          return { exitCode: 0, stdout, stderr };
+        } catch (error: any) {
+          return {
+            exitCode: typeof error?.code === 'number' ? error.code : 1,
+            stdout: typeof error?.stdout === 'string' ? error.stdout : '',
+            stderr: typeof error?.stderr === 'string' ? error.stderr : String(error),
+          };
+        }
+      },
+    });
+
+    assert.deepEqual(await tool(tools, 'Grep').impl({ pattern: 'needle' }, toolCtx(cwd)), {
+      matches: ['src/file.txt:2:needle'],
+    });
+    // Single-file search must still carry the path prefix (rg --with-filename).
+    assert.deepEqual(
+      await tool(tools, 'Grep').impl({ pattern: 'needle', path: join(cwd, 'src', 'file.txt') }, toolCtx(cwd)),
+      { matches: ['src/file.txt:2:needle'] },
+    );
+  });
+
+  test('Grep with rg ignores RIPGREP_CONFIG_PATH and will not follow a symlink out of the workspace', async (t) => {
+    try {
+      await execAsync('rg --version', { env: process.env });
+    } catch {
+      t.skip('ripgrep not installed');
+      return;
+    }
+    const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-grep-cfg-'));
+    await mkdir(join(cwd, 'src'));
+    await writeFile(join(cwd, 'src', 'file.txt'), 'hello\nneedle\n', 'utf8');
+    // A file OUTSIDE the workspace, reachable only by following a symlink.
+    const outside = await mkdtemp(join(tmpdir(), 'maka-headless-grep-outside-'));
+    await writeFile(join(outside, 'secret.txt'), 'needle\n', 'utf8');
+    await symlink(join(outside, 'secret.txt'), join(cwd, 'src', 'evil.txt'));
+    // An rg config that turns symlink-following ON. --no-config must make rg
+    // ignore it; without --no-config rg would read it, follow src/evil.txt, and
+    // leak the external file — exactly the workspace-escape this guards against.
+    const rgConfig = join(await mkdtemp(join(tmpdir(), 'maka-headless-rgcfg-')), 'rg.conf');
+    await writeFile(rgConfig, '--follow\n', 'utf8');
+    const tools = buildIsolatedHeadlessTools({
+      async exec(input) {
+        try {
+          const { stdout, stderr } = await execAsync(input.command, {
+            cwd: input.cwd,
+            env: { ...process.env, RIPGREP_CONFIG_PATH: rgConfig }, // host passes it through (childProcessEnv)
+            maxBuffer: 1024 * 1024,
+          });
+          return { exitCode: 0, stdout, stderr };
+        } catch (error: any) {
+          return {
+            exitCode: typeof error?.code === 'number' ? error.code : 1,
+            stdout: typeof error?.stdout === 'string' ? error.stdout : '',
+            stderr: typeof error?.stderr === 'string' ? error.stderr : String(error),
+          };
+        }
+      },
+    });
+
+    const result = (await tool(tools, 'Grep').impl({ pattern: 'needle' }, toolCtx(cwd))) as { matches: string[] };
+    assert.ok(result.matches.includes('src/file.txt:2:needle'), 'the in-workspace match is still returned');
+    assert.ok(
+      !result.matches.some((m) => m.includes('evil.txt')),
+      'the symlink out of the workspace is not followed despite RIPGREP_CONFIG_PATH=--follow',
+    );
+  });
+
+  test('Grep routes glob filters through the fallback dialect, not ripgrep --glob (parity with/without rg)', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-grep-glob-'));
+    // Three root files all containing the needle. The glob "{a,c}.txt" diverges by
+    // dialect: ripgrep's --glob brace-expands it to a.txt/c.txt, while the
+    // fallback's globPatternToEre treats { } , as literals and matches only the
+    // file literally named "{a,c}.txt". The fix routes every glob through the
+    // fallback, so the result is the literal file in BOTH rg-present and
+    // rg-absent environments — this assertion fails if rg ever handles the glob.
+    await writeFile(join(cwd, 'a.txt'), 'needle\n', 'utf8');
+    await writeFile(join(cwd, 'c.txt'), 'needle\n', 'utf8');
+    await writeFile(join(cwd, '{a,c}.txt'), 'needle\n', 'utf8');
+    const tools = buildIsolatedHeadlessTools({
+      async exec(input) {
+        try {
+          const { stdout, stderr } = await execAsync(input.command, {
+            cwd: input.cwd,
+            env: process.env, // full PATH: if rg is installed, it is a candidate
+            maxBuffer: 1024 * 1024,
+          });
+          return { exitCode: 0, stdout, stderr };
+        } catch (error: any) {
+          return {
+            exitCode: typeof error?.code === 'number' ? error.code : 1,
+            stdout: typeof error?.stdout === 'string' ? error.stdout : '',
+            stderr: typeof error?.stderr === 'string' ? error.stderr : String(error),
+          };
+        }
+      },
+    });
+
+    const result = (await tool(tools, 'Grep').impl({ pattern: 'needle', glob: '{a,c}.txt' }, toolCtx(cwd))) as { matches: string[] };
+    assert.deepEqual(result.matches, ['{a,c}.txt:1:needle'], 'glob uses the literal fallback dialect, not rg brace-expansion');
+  });
+
+  test('the ripgrep Grep branch pins its safety flags and never re-grows --glob (non-skippable safety net)', async () => {
+    let captured = '';
+    const tools = buildIsolatedHeadlessTools({
+      async exec(input) {
+        captured = input.command;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+    await tool(tools, 'Grep').impl({ pattern: 'needle' }, toolCtx('/workspace'));
+    // Pin the exact rg invocation (not just a comment mention) so the config- and
+    // symlink-escape guards cannot be silently dropped — runs with or without rg.
+    assert.match(captured, /rg --no-config --no-follow .* -e "\$grep_pattern" -- "\$search"/);
+    // The rg branch is gated on no-glob; every glob must route through the fallback
+    // dialect, so this assertion holds even on a machine without rg installed.
+    assert.match(captured, /\[ -z "\$glob" \] && command -v rg/);
+    // ...and the deleted dynamic --glob assembly must never come back into rg.
+    assert.doesNotMatch(captured, /--glob "\$glob"/);
   });
 
   test('command-backed Edit runs the shared fuzzy matcher via node -e', async () => {
