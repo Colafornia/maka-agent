@@ -283,7 +283,14 @@ describe('Model OAuth catalog contract (PR-MODEL-OAUTH-ALL-0 + PR-CLAUDE-CARD-MO
     assert.match(overlay, /<X strokeWidth=\{1\.75\} aria-hidden="true" \/>/);
     assert.match(styles, /\.providerConfigSheet\s*\{[\s\S]*position:\s*relative;/);
     assert.match(styles, /\.providerConfigSheetClose\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*14px;/);
-    assert.match(styles, /\.providerConfigSheetClose:focus-visible\s*\{[\s\S]*outline:\s*2px solid var\(--accent\);/);
+    // The close button reuses the governed quiet icon Button, so its rest /
+    // hover / focus states come from the component, not hand-written CSS. The
+    // local class only positions and rounds it.
+    assert.match(
+      overlay,
+      /variant="quiet"[\s\S]*?size="icon-sm"[\s\S]*?className="providerConfigSheetClose"/,
+      'close button must reuse the governed quiet icon Button for its hover/focus states',
+    );
   });
 
   it('provider config sheets hide the blurred Settings background from accessibility', async () => {
