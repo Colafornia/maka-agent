@@ -7,7 +7,6 @@ import {
 } from '@maka/runtime';
 import { posix as pathPosix } from 'node:path';
 import { z } from 'zod';
-import { buildHeavyTaskEngineeringTools, type HeavyTaskEngineeringRecorder } from './heavy-task-engineering.js';
 import type { HeavyTaskEvidenceRecorder } from './heavy-task-evidence.js';
 import { buildHeavyTaskProgressTools, type HeavyTaskProgressRecorder } from './heavy-task-progress.js';
 import { buildHeavyTaskSelfCheckTools, type HeavyTaskSelfCheckRecorder } from './heavy-task-self-check.js';
@@ -17,7 +16,6 @@ export interface BuildIsolatedHeadlessToolsOptions {
   heavyTaskEvidence?: HeavyTaskEvidenceRecorder;
   heavyTaskProgress?: HeavyTaskProgressRecorder;
   heavyTaskSelfCheck?: HeavyTaskSelfCheckRecorder;
-  heavyTaskEngineering?: HeavyTaskEngineeringRecorder;
 }
 
 /**
@@ -43,9 +41,6 @@ export function buildIsolatedHeadlessTools(
   }
   if (options.heavyTaskSelfCheck) {
     tools.push(...buildHeavyTaskSelfCheckTools(options.heavyTaskSelfCheck));
-  }
-  if (options.heavyTaskEngineering) {
-    tools.push(...buildHeavyTaskEngineeringTools(options.heavyTaskEngineering));
   }
   return tools;
 }

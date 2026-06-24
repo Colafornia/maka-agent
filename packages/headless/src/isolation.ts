@@ -1,5 +1,4 @@
 import type { Config, Task } from './contracts.js';
-import type { HeavyTaskEngineeringRecorder } from './heavy-task-engineering.js';
 import type { HeavyTaskEvidenceRecorder } from './heavy-task-evidence.js';
 import type { HeavyTaskModeSelection } from './heavy-task-policy.js';
 import type { HeavyTaskProgressRecorder } from './heavy-task-progress.js';
@@ -158,8 +157,6 @@ export interface HeadlessBackendContext {
   heavyTaskSelfCheck?: HeavyTaskSelfCheckRecorder;
   /** Present only when heavy-task mode is enabled for compact public evidence capture. */
   heavyTaskEvidence?: HeavyTaskEvidenceRecorder;
-  /** Present only when heavy-task mode is enabled for structured engineering loop records. */
-  heavyTaskEngineering?: HeavyTaskEngineeringRecorder;
 }
 
 export function validateRealBackendIsolation(isolation: RealBackendIsolation | undefined): void {
