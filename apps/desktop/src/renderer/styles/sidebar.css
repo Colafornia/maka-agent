@@ -303,7 +303,7 @@
 }
 .maka-search-modal-title {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   font-weight: 600;
   color: var(--foreground);
 }
@@ -313,7 +313,7 @@
   border: 0;
   background: transparent;
   color: var(--foreground-60);
-  font-size: 16px;
+  font-size: 1.0667em;
   line-height: 1;
   border-radius: var(--radius-control);
 }
@@ -344,7 +344,7 @@
 .maka-search-modal-input {
   width: 100%;
   color: var(--foreground);
-  font-size: 13px;
+  font-size: var(--font-size-ui);
   line-height: 1.4;
 }
 .maka-search-modal-input::placeholder {
@@ -379,7 +379,7 @@
 }
 .maka-search-modal-placeholder {
   margin: 14px 8px;
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   color: var(--foreground-50);
   text-align: center;
 }
@@ -401,11 +401,11 @@
 }
 .maka-search-modal-state p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   color: var(--foreground);
 }
 .maka-search-modal-state .maka-search-modal-state-detail {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--foreground-60);
 }
 
@@ -415,7 +415,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 0 6px 6px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--foreground-50);
 }
 
@@ -458,7 +458,7 @@
   opacity: 0.7;
 }
 .maka-search-modal-result-title {
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   font-weight: 600;
   color: var(--foreground);
   overflow: hidden;
@@ -466,14 +466,14 @@
   white-space: nowrap;
 }
 .maka-search-modal-result-meta {
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   color: var(--foreground-40);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .maka-search-modal-result-snippet {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--foreground-60);
   line-height: 1.45;
   /* Plain text snippet — backend redacts secrets + bounds to
@@ -620,7 +620,7 @@
   justify-content: center;
   border-radius: var(--radius-pill);
   padding: 0 4px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -679,7 +679,7 @@
   gap: 3px;
   padding: 0 6px 3px;
   color: var(--foreground-50);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -855,7 +855,7 @@
   background: transparent;
   color: var(--foreground);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-size-ui);
   font-weight: 600;
   outline: 0;
   padding: 1px 0;
@@ -932,13 +932,13 @@
 
 .maka-prompt-chip-label {
   color: var(--foreground);
-  font-size: 13px;
+  font-size: var(--font-size-ui);
   font-weight: 600;
 }
 
 .maka-prompt-chip-hint {
   color: var(--foreground-60);
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   line-height: 1.45;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -968,14 +968,14 @@
   display: block;
   margin: 0 0 4px;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   font-weight: 700;
 }
 
 .maka-deep-research-workflow-body {
   display: block;
   color: var(--foreground-60);
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   line-height: 1.45;
 }
 
@@ -995,7 +995,7 @@
 .maka-deep-research-progress h2 {
   margin: 0;
   color: var(--foreground);
-  font-size: 13px;
+  font-size: var(--font-size-ui);
   line-height: 1.3;
 }
 
@@ -1026,7 +1026,7 @@
 .maka-deep-research-evidence-title,
 .maka-deep-research-progress-title {
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -1037,6 +1037,6 @@
 .maka-deep-research-progress-body {
   min-width: 0;
   color: var(--foreground-60);
-  font-size: 12px;
+  font-size: var(--font-size-ui);
   line-height: 1.45;
 }
