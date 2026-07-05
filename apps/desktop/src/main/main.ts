@@ -1,6 +1,6 @@
 import { app, ipcMain, nativeImage, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { startConfigFileWatcher, type ConfigFileWatcher } from './config-file-watcher.js';
 import { release as osRelease, arch as osArch } from 'node:os';
@@ -112,6 +112,7 @@ import { handleQuickChatStart as runQuickChatStart, type QuickChatResult } from 
 import { probeOfficeCli } from './officecli-probe.js';
 import { resolveOpenPath, type OpenPathResult } from './open-path-guard.js';
 import { resolveProjectGitInfo, resolveProjectRoot } from '@maka/runtime';
+import { listLocalBranches, checkoutBranch } from './git-branch.js';
 import { createDailyReviewArchiveStore } from './daily-review-archive-store.js';
 import { botTestErrorMessage, buildSettingsUpdateResult, maskAppSettings, preserveSensitivePlaceholders, toSettingsTestResult } from './settings-ipc-helpers.js';
 import {
@@ -423,6 +424,11 @@ let lookupPricing = buildPricingLookup();
 // same readiness during reconnect attempts).
 const previousBotReadiness = new Map<BotProvider, BotReadinessState>();
 let botIncoming: ReturnType<typeof createBotIncomingMainService>;
+// botIncoming is wired at module load, before registerIpc() defines the
+// current-project-root resolver. registerIpc reassigns this once the resolver
+// exists; until then the launch directory is the safe fallback. Unifying
+// project-root resolution is tracked as a follow-up.
+let resolveCurrentProjectRoot: () => Promise<string> = async () => process.cwd();
 const botRegistry = new BotRegistry({
   onIncomingMessage: (message) => {
     // Only log incoming bot messages in dev — production stdout leaking
@@ -683,7 +689,7 @@ const dailyReview = createDailyReviewMainService({
 botIncoming = createBotIncomingMainService({
   runtime,
   botRegistry,
-  cwd: () => process.cwd(),
+  getCurrentProjectRoot: () => resolveCurrentProjectRoot(),
   getDefaultConnectionSlug: () => connectionStore.getDefault(),
   getReadyConnection,
   readSessionHeader: (sessionId) => store.readHeader(sessionId),
@@ -802,11 +808,57 @@ function proxyTestFailureMessage(result: TestProxyResult): string {
 }
 
 function registerIpc(): void {
+  const LAST_PROJECT_PATH_FILE = join(workspaceRoot, 'last-project-path.json');
+
   let selectedProjectRoot: string | null = null;
+
+  async function loadPersistedProjectRoot(): Promise<string | null> {
+    try {
+      const raw = await readFile(LAST_PROJECT_PATH_FILE, 'utf8');
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof parsed.projectPath === 'string' && parsed.projectPath) {
+        await stat(parsed.projectPath);
+        return await resolveProjectRoot([parsed.projectPath]);
+      }
+    } catch {
+      // File missing, invalid, or points at a deleted directory.
+    }
+    return null;
+  }
+  const persistedProjectRootPromise = loadPersistedProjectRoot();
+
+  async function saveLastProjectPath(projectPath: string): Promise<void> {
+    try {
+      await writeFile(LAST_PROJECT_PATH_FILE, JSON.stringify({ projectPath }), 'utf8');
+    } catch {
+      // Best-effort; failure should not block the selection.
+    }
+  }
 
   async function currentProjectRoot(): Promise<string> {
     if (selectedProjectRoot) return selectedProjectRoot;
+    const persistedProjectRoot = await persistedProjectRootPromise;
+    if (persistedProjectRoot) {
+      selectedProjectRoot = persistedProjectRoot;
+      return persistedProjectRoot;
+    }
     return resolveProjectRoot([process.cwd(), app.getAppPath()]);
+  }
+  resolveCurrentProjectRoot = currentProjectRoot;
+
+  async function resolveExplicitProjectRoot(projectPath: unknown): Promise<
+    | { ok: true; projectPath: string }
+    | { ok: false; reason: 'invalid-path' | 'not-found' }
+  > {
+    if (typeof projectPath !== 'string' || !projectPath) {
+      return { ok: false, reason: 'invalid-path' };
+    }
+    try {
+      await stat(projectPath);
+    } catch {
+      return { ok: false, reason: 'not-found' };
+    }
+    return { ok: true, projectPath: await resolveProjectRoot([projectPath]) };
   }
 
   ipcMain.handle('window:setTitlebarControlsVisible', (event, visible: unknown): void => {
@@ -860,6 +912,7 @@ function registerIpc(): void {
       if (!selectedPath) return { ok: false, reason: 'missing-selection' };
       const projectPath = await resolveProjectRoot([selectedPath]);
       selectedProjectRoot = projectPath;
+      void saveLastProjectPath(projectPath);
       return {
         ok: true,
         projectPath,
@@ -867,12 +920,63 @@ function registerIpc(): void {
       };
     },
   );
+  ipcMain.handle(
+    'app:selectProjectRoot',
+    async (_event, projectPath: unknown): Promise<
+      | { ok: true; projectPath: string; projectGit: Awaited<ReturnType<typeof resolveProjectGitInfo>> }
+      | { ok: false; reason: 'invalid-path' | 'not-found' }
+    > => {
+      const explicitRoot = await resolveExplicitProjectRoot(projectPath);
+      if (!explicitRoot.ok) return explicitRoot;
+      const resolved = explicitRoot.projectPath;
+      selectedProjectRoot = resolved;
+      void saveLastProjectPath(resolved);
+      return {
+        ok: true,
+        projectPath: resolved,
+        projectGit: await resolveProjectGitInfo(resolved),
+      };
+    },
+  );
+  ipcMain.handle(
+    'app:resolveProjectGitInfo',
+    async (
+      _event,
+      projectPath: unknown,
+    ): Promise<
+      | { ok: true; projectPath: string; projectGit: Awaited<ReturnType<typeof resolveProjectGitInfo>> }
+      | { ok: false; reason: 'invalid-path' | 'not-found' }
+    > => {
+      if (projectPath !== undefined) {
+        const explicitRoot = await resolveExplicitProjectRoot(projectPath);
+        if (!explicitRoot.ok) return explicitRoot;
+        const resolved = explicitRoot.projectPath;
+        return { ok: true, projectPath: resolved, projectGit: await resolveProjectGitInfo(resolved) };
+      }
+      const resolved = await currentProjectRoot();
+      return { ok: true, projectPath: resolved, projectGit: await resolveProjectGitInfo(resolved) };
+    },
+  );
+  ipcMain.handle('app:listGitBranches', async () => {
+    const projectPath = await currentProjectRoot();
+    return listLocalBranches(projectPath);
+  });
+  ipcMain.handle(
+    'app:checkoutGitBranch',
+    async (_event, branch: unknown): Promise<{ ok: boolean; branch?: string; reason?: string; message?: string }> => {
+      if (typeof branch !== 'string' || !branch) {
+        return { ok: false, reason: 'failed', message: '无效的分支名' };
+      }
+      const projectPath = await currentProjectRoot();
+      return checkoutBranch(projectPath, branch);
+    },
+  );
   registerMemoryIpc({ localMemory });
-  ipcMain.handle('workspaceInstructions:getState', () => getWorkspaceInstructionsState(process.cwd()));
+  ipcMain.handle('workspaceInstructions:getState', async () => getWorkspaceInstructionsState(await currentProjectRoot()));
   ipcMain.handle(
     'workspaceInstructions:openFile',
     async (_event, file: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
-      const resolved = await resolveWorkspaceInstructionFileForOpen(process.cwd(), typeof file === 'string' ? file : '');
+      const resolved = await resolveWorkspaceInstructionFileForOpen(await currentProjectRoot(), typeof file === 'string' ? file : '');
       if (!resolved.ok) return { ok: false, message: workspaceInstructionOpenFailureCopy(resolved.reason) };
       const error = await shell.openPath(resolved.path);
       return error ? { ok: false, message: workspaceInstructionOpenFailureCopy('open-failed') } : { ok: true };
@@ -881,7 +985,7 @@ function registerIpc(): void {
   ipcMain.handle(
     'workspaceInstructions:createFile',
     async (_event, file: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
-      const created = await createWorkspaceInstructionFile(process.cwd(), typeof file === 'string' ? file : '');
+      const created = await createWorkspaceInstructionFile(await currentProjectRoot(), typeof file === 'string' ? file : '');
       if (!created.ok) return { ok: false, message: workspaceInstructionCreateFailureCopy(created.reason) };
       return { ok: true };
     },
@@ -1026,7 +1130,7 @@ function registerIpc(): void {
   registerPlanReminderIpc({ planReminders, getWorkspacePrivacyContext });
   ipcMain.handle('sessions:list', (_event, filter?: SessionListFilter) => runtime.listSessions(filter));
   ipcMain.handle('sessions:create', async (_event, input?: Partial<CreateSessionInput>) => {
-    const cwd = input?.cwd ?? process.cwd();
+    const cwd = input?.cwd ?? (await currentProjectRoot());
     if (input?.backend === 'fake') {
       if (!canCreateFakeSessionFromRenderer()) {
         throw new Error('FakeBackend sessions are only available in development.');
@@ -1290,7 +1394,7 @@ function registerIpc(): void {
   // surfaces (connectionSlug / model) will land in PR110c/d when the
   // model-picker UI is ready.
   ipcMain.handle('quickChat:start', async (_event, input: unknown) => {
-    return handleQuickChatStart(input);
+    return handleQuickChatStart(input, currentProjectRoot);
   });
 
   ipcMain.handle('permissions:getSnapshot', () => buildPermissionSnapshot());
@@ -1612,7 +1716,10 @@ function normalizeSupportedSessionThinkingLevel(
  * `./quick-chat.ts` so it can be unit-tested without spinning up an
  * Electron app.
  */
-async function handleQuickChatStart(rawInput: unknown): Promise<QuickChatResult> {
+async function handleQuickChatStart(
+  rawInput: unknown,
+  getCurrentProjectRoot: () => Promise<string>,
+): Promise<QuickChatResult> {
   return runQuickChatStart(rawInput, {
     getOnboardingState: async () => (await onboardingService.getSnapshot()).state,
     createSession: async (input) => {
@@ -1631,7 +1738,7 @@ async function handleQuickChatStart(rawInput: unknown): Promise<QuickChatResult>
           : resolveDefaultPermissionMode(() => settingsStore.get()),
       ]);
       return runtime.createSession({
-        cwd: process.cwd(),
+        cwd: await getCurrentProjectRoot(),
         backend: 'ai-sdk',
         llmConnectionSlug: ready.connection.slug,
         model: ready.model,

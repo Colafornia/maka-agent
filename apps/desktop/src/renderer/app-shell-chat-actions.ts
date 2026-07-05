@@ -95,6 +95,8 @@ export function createAppShellChatActions(deps: {
   isNewChatSendSurfaceActive: (owner: ComposerImportOwner) => boolean;
   markSessionReadLocally: (sessionId: string, readMessages: readonly StoredMessage[]) => void;
   messageRetryPendingRef: RefBox<Set<string>>;
+  pendingNewChatPermissionMode: PendingNewChatPermissionMode;
+  setPendingNewChatPermissionMode: (mode: PendingNewChatPermissionMode) => void;
   refreshSessions: () => Promise<SessionSummary[]>;
   setActiveId: (sessionId: string | undefined) => void;
   setMessageLoadErrorBySession: MessageLoadErrorUpdater;
@@ -104,8 +106,6 @@ export function createAppShellChatActions(deps: {
   showModelSetupToast: (description: string, reason?: string) => void;
   toastApi: ToastApi;
   upsertSessionSummary: (session: SessionSummary) => void;
-  pendingNewChatPermissionMode: PendingNewChatPermissionMode;
-  setPendingNewChatPermissionMode: (mode: PendingNewChatPermissionMode) => void;
   validPendingNewChatModel: PendingNewChatModel;
   pendingNewChatThinkingLevel: PendingNewChatThinkingLevel;
 }): AppShellChatActions {
@@ -117,17 +117,17 @@ export function createAppShellChatActions(deps: {
     isNewChatSendSurfaceActive,
     markSessionReadLocally,
     messageRetryPendingRef,
+    pendingNewChatPermissionMode,
     refreshSessions,
     setActiveId,
     setMessageLoadErrorBySession,
     setMessageRetryPendingBySession,
     setMessages,
     setNavSelection,
+    setPendingNewChatPermissionMode,
     showModelSetupToast,
     toastApi,
     upsertSessionSummary,
-    pendingNewChatPermissionMode,
-    setPendingNewChatPermissionMode,
     validPendingNewChatModel,
     pendingNewChatThinkingLevel,
   } = deps;
@@ -179,7 +179,7 @@ export function createAppShellChatActions(deps: {
           // Only send permissionMode when the user explicitly picked one in
           // the composer. Omitting it lets main.ts's sessions:create resolve
           // the configured chatDefaults.permissionMode as the single
-          // authority — a renderer-side copy of the default can be stale
+	          // authority — a renderer-side copy of the default can be stale
           // (e.g. before the mount-time settings load resolves on a cold
           // start), which would silently override the configured setting.
           ...(pendingNewChatPermissionMode ? { permissionMode: pendingNewChatPermissionMode } : {}),

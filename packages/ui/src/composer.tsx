@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, ChevronDown, FileEdit, FolderOpen, Mic, Plus } from './icons.js';
+import { ArrowUp, Check, ChevronDown, FileEdit, FolderOpen, GitBranch, History, Mic, Plus } from './icons.js';
 import { ChatModelSwitcher, ModelChipStatic, NewChatModelPicker } from './chat-model-switcher.js';
 import { type UiLocale, detectUiLocale } from './locale-helpers.js';
 import { type ChatModelChoice, modelChoiceValue } from './chat-model-helpers.js';
@@ -27,8 +27,8 @@ import { readGlobalInputHistory, saveGlobalInputHistoryEntry } from './input-his
 import type { PermissionMode, ProviderType, SessionSummary } from '@maka/core';
 import { Button as UiButton, Textarea as UiTextarea } from './ui.js';
 import { Kbd } from './primitives/kbd.js';
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from './primitives/menu.js';
 import { PERMISSION_MODE_META, PermissionModeMenuPopup } from './permission-mode-menu.js';
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from './primitives/menu.js';
 
 const COMPOSER_MAX_HEIGHT = 240;
 
@@ -148,7 +148,22 @@ export const Composer = forwardRef<
       label?: string;
       branch?: string | null;
       pending?: boolean;
+      recentWorkspaces?: string[];
       onOpen(): void;
+      onSelect(path: string): void;
+    };
+    /**
+     * Git branch picker for the workspace row, shown to the right of
+     * the folder indicator when the workspace is a git repository.
+     * Clicking the trigger opens a Menu listing local branches; selecting
+     * one fires `onSelect` to switch branches (handled in the shell).
+     */
+    branchPicker?: {
+      branch: string | null;
+      pending?: boolean;
+      branches: string[];
+      onOpen(): void;
+      onSelect(branch: string): void;
     };
     /**
      * PR-MOVE-PERMISSION-MODE (WAWQAQ 47fe0d0e + a667cf6c): the
@@ -745,7 +760,9 @@ export const Composer = forwardRef<
           </div>
         </div>
       </div>
-      {props.workspacePicker && (
+      {props.workspacePicker && (() => {
+        const wp = props.workspacePicker!;
+        return (
         <div className="maka-composer-workspace-row">
           {/* PR-COMPOSER-WORKSPACE-PICKER-PRIMITIVE-0 (round 9/30):
               the workspace picker badge was a raw `<button>`.
@@ -753,30 +770,121 @@ export const Composer = forwardRef<
               still owns the picker's inline-flex shape (icon +
               label + chevron) and the bespoke 3px accent
               focus-visible ring. */}
-          <UiButton
-            type="button"
-            variant="quiet"
-            className="maka-composer-workspace-picker"
-            disabled={props.workspacePicker.pending === true}
-            aria-busy={props.workspacePicker.pending === true ? 'true' : undefined}
-            onClick={props.workspacePicker.onOpen}
-            title={props.workspacePicker.branch ? `选择工作目录 · ${props.workspacePicker.branch}` : '选择工作目录'}
-            aria-label={props.workspacePicker.branch
-              ? `选择工作目录：${props.workspacePicker.label ?? '当前工作目录'}，当前分支 ${props.workspacePicker.branch}`
-              : `选择工作目录：${props.workspacePicker.label ?? '当前工作目录'}`}
-          >
-            <FolderOpen size={13} strokeWidth={1.7} aria-hidden="true" />
-            {/* WAWQAQ msg `28128c9e` (2026-06-20): when a directory has
-                been chosen, the label replaces the "选择工作目录"
-                placeholder rather than appearing next to it. The
-                placeholder is purely for the empty state. */}
-            {props.workspacePicker.label
-              ? <span className="maka-composer-workspace-current">{props.workspacePicker.label}</span>
-              : <span>选择工作目录</span>}
-            <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" />
-          </UiButton>
+          <Menu>
+            <MenuTrigger
+              render={({ onClick: menuToggleClick, ...triggerRest }) => (
+                <UiButton
+                  {...triggerRest}
+                  onClick={(e) => {
+                    menuToggleClick?.(e);
+                  }}
+                  type="button"
+                  variant="quiet"
+                  className="maka-composer-workspace-picker"
+                  disabled={wp.pending === true}
+                  aria-busy={wp.pending === true ? 'true' : undefined}
+                  title={wp.branch ? `选择工作目录 · ${wp.branch}` : '选择工作目录'}
+                  aria-label={wp.branch
+                    ? `选择工作目录：${wp.label ?? '当前工作目录'}，当前分支 ${wp.branch}`
+                    : `选择工作目录：${wp.label ?? '当前工作目录'}`}
+                >
+                  <FolderOpen size={13} strokeWidth={1.7} aria-hidden="true" />
+                  {wp.label
+                    ? <span className="maka-composer-workspace-current">{wp.label}</span>
+                    : <span>选择工作目录</span>}
+                  <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" />
+                </UiButton>
+              )}
+            />
+            <MenuPopup className="maka-composer-workspace-menu" align="start" side="top" sideOffset={6}>
+              {wp.recentWorkspaces && wp.recentWorkspaces.length > 0
+                ? (
+                  <>
+                    {wp.recentWorkspaces.map((wsp) => (
+                      <MenuItem key={wsp} onClick={() => { wp.onSelect(wsp); }}>
+                        <History size={13} strokeWidth={1.7} aria-hidden="true" />
+                        <span>{basenameFromPath(wsp)}</span>
+                      </MenuItem>
+                    ))}
+                    <MenuSeparator />
+                    <MenuItem onClick={() => { wp.onOpen(); }}>
+                      <FolderOpen size={13} strokeWidth={1.7} aria-hidden="true" />
+                      <span>选择其他目录...</span>
+                    </MenuItem>
+                  </>
+                )
+                : (
+                  <MenuItem onClick={() => { wp.onOpen(); }}>
+                    <FolderOpen size={13} strokeWidth={1.7} aria-hidden="true" />
+                    <span>选择工作目录...</span>
+                  </MenuItem>
+                )}
+            </MenuPopup>
+          </Menu>
+          {props.branchPicker && (() => {
+            const bp = props.branchPicker!;
+            const triggerDisabled = bp.pending === true;
+            return (
+              <Menu>
+                <MenuTrigger
+                  render={({ onClick: menuToggleClick, ...triggerRest }) => (
+                    <UiButton
+                      {...triggerRest}
+                      onClick={(e) => {
+                        bp.onOpen();
+                        menuToggleClick?.(e);
+                      }}
+                      type="button"
+                      variant="quiet"
+                      className="maka-composer-branch-picker"
+                      disabled={triggerDisabled}
+                      aria-busy={triggerDisabled ? 'true' : undefined}
+                      title={bp.branch ? `分支：${bp.branch}` : '选择分支'}
+                      aria-label={bp.branch
+                        ? `切换分支：${bp.branch}`
+                        : '选择分支'}
+                    >
+                      <GitBranch size={13} strokeWidth={1.7} aria-hidden="true" />
+                      <span className="maka-composer-branch-current">{bp.branch ?? '—'}</span>
+                      <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" />
+                    </UiButton>
+                  )}
+                />
+                <MenuPopup className="maka-composer-branch-menu" align="start" side="top" sideOffset={6}>
+                  {bp.branches.length === 0 ? (
+                    <div className="maka-composer-branch-empty">无本地分支</div>
+                  ) : (
+                    bp.branches.map((b) => (
+                      <MenuItem
+                        key={b}
+                        data-active={b === bp.branch}
+                        onClick={() => {
+                          if (b === bp.branch) return;
+                          void bp.onSelect(b);
+                        }}
+                      >
+                        <GitBranch size={13} strokeWidth={1.7} aria-hidden="true" />
+                        <span>{b}</span>
+                        {b === bp.branch && (
+                          <Check size={12} strokeWidth={2} aria-hidden="true" className="maka-composer-branch-check" />
+                        )}
+                      </MenuItem>
+                    ))
+                  )}
+                </MenuPopup>
+              </Menu>
+            );
+          })()}
         </div>
-      )}
+      );
+    })()}
     </form>
   );
 });
+
+/** Extract the last path segment from a file system path (win32 / posix). */
+function basenameFromPath(value: string): string {
+  const trimmed = value.replace(/[\\/]+$/, '');
+  const name = trimmed.split(/[\\/]/).filter(Boolean).pop();
+  return name || trimmed || '当前项目';
+}

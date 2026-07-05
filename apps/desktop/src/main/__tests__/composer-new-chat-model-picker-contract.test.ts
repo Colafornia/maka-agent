@@ -99,8 +99,8 @@ describe('home composer new-chat model picker', () => {
     );
     assert.match(
       renderer,
-      /onPickNewChatModel=\{\(input\) => setPendingNewChatModel\(input\)\}/,
-      'main.tsx must wire the composer pick to setPendingNewChatModel',
+      /onPickNewChatModel=\{\(input\) => \{[\s\S]*setPendingNewChatModel\(input\);[\s\S]*saveComposerDefaults\(\{ model: input \}\);[\s\S]*\}\}/,
+      'main.tsx must wire the composer pick to state and persisted composer defaults',
     );
     // A pick only stays in effect while it is still an offered choice; once the
     // connection/model is removed the picker must fall back to the default so it
@@ -150,7 +150,22 @@ describe('home composer new-chat model picker', () => {
     assert.match(
       renderer,
       /const \[pendingNewChatPermissionMode, setPendingNewChatPermissionMode\] = useState<PermissionMode \| null>\(null\)/,
-      'AppShell must keep the picked empty-state permission mode in renderer-only state',
+      'AppShell must keep the no-session permission pick renderer-only and start it from null',
+    );
+    assert.doesNotMatch(
+      renderer,
+      /saveComposerDefaults\(\{\s*permissionMode:/,
+      'permission mode must not be persisted into composer defaults',
+    );
+    assert.match(
+      renderer,
+      /setPendingNewChatPermissionMode: \(mode: PendingNewChatPermissionMode\) => void;/,
+      'createAppShellChatActions deps must include setPendingNewChatPermissionMode so send() can reset the one-shot pick',
+    );
+    assert.match(
+      renderer,
+      /setPendingNewChatPermissionMode,[\s\S]*validPendingNewChatModel,/,
+      'createAppShellChatActions must destructure setPendingNewChatPermissionMode before send() calls it',
     );
     assert.match(
       setPermissionModeBlock,

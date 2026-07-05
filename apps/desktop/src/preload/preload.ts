@@ -771,6 +771,35 @@ contextBridge.exposeInMainWorld('maka', {
     > {
       return ipcRenderer.invoke('app:selectProjectDirectory');
     },
+    selectProjectRoot(projectPath: string): Promise<
+      | { ok: true; projectPath: string; projectGit: { isGitRepo: boolean; branch?: string } }
+      | { ok: false; reason: 'invalid-path' | 'not-found' }
+    > {
+      return ipcRenderer.invoke('app:selectProjectRoot', projectPath);
+    },
+    resolveProjectGitInfo(projectPath: string): Promise<
+      | { ok: true; projectPath: string; projectGit: { isGitRepo: boolean; branch?: string } }
+      | { ok: false; reason: 'invalid-path' | 'not-found' }
+    > {
+      return ipcRenderer.invoke('app:resolveProjectGitInfo', projectPath);
+    },
+    listGitBranches(): Promise<{
+      ok: boolean;
+      branches?: string[];
+      current?: string;
+      reason?: string;
+      message?: string;
+    }> {
+      return ipcRenderer.invoke('app:listGitBranches');
+    },
+    checkoutGitBranch(branch: string): Promise<{
+      ok: boolean;
+      branch?: string;
+      reason?: string;
+      message?: string;
+    }> {
+      return ipcRenderer.invoke('app:checkoutGitBranch', branch);
+    },
     openArtifactPath(
       artifactId: string,
     ): Promise<
