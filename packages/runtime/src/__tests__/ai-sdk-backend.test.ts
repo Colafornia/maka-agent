@@ -36,6 +36,11 @@ import {
   type HistoryCompactBlock,
   type SynthesisCacheBlock,
 } from '../context-budget.js';
+import {
+  loadHistoryCompactBlocksFromArtifacts,
+  persistHistoryCompactBlocksToArtifacts,
+} from '../history-compact-artifacts.js';
+import { memoryArtifactStore } from './memory-artifact-store.js';
 import { buildRuntimeEventModelReplayPlan } from '../model-history.js';
 import type { ActiveFullCompactBlock } from '../active-full-compact.js';
 import type { SemanticCompactBlock } from '../semantic-compact.js';
@@ -2259,6 +2264,102 @@ describe('AiSdkBackend model history', () => {
     assert.equal(usage?.contextBudget?.historyCompactBlocksLoaded, 1);
     assert.equal(usage?.contextBudget?.historyCompactBlocksSelected, 1);
     assert.equal(usage?.contextBudget?.historyCompactWritesAttempted, undefined);
+  });
+
+  test('replays a persisted compact block whose provenance JSON outgrows the token budget', async () => {
+    const model = completionModel();
+    const events: SessionEvent[] = [];
+    const oldEvents = Array.from({ length: 60 }, (_, index) => runtimeTextEvent({
+      id: `compact-large-old-${index}`,
+      turnId: `turn-old-${index}`,
+      role: index % 2 === 0 ? 'user' : 'model',
+      author: index % 2 === 0 ? 'user' : 'agent',
+      text: `large fold source fact ${index}`,
+    }));
+    const artifactStore = memoryArtifactStore();
+    const persisted = await persistHistoryCompactBlocksToArtifacts(artifactStore, {
+      sessionId: 'session-1',
+      turnId: 'turn-persist',
+      source: {
+        draftBlock: buildHistoryCompactBlockFromSummary({
+          sessionId: 'session-1',
+          foldedRuntimeEvents: oldEvents,
+          summary: 'PERSISTED_LARGE_COMPACT_SENTINEL',
+          highWaterName: 'large-history-compact',
+          highWaterSeq: 2,
+          charsPerToken: 1,
+        }),
+        foldedRuntimeEvents: oldEvents,
+      },
+      limits: {
+        maxBlocks: 1,
+        maxBlockEstimatedTokens: 1_024,
+        maxEstimatedTokens: 2_048,
+        charsPerToken: 1,
+      },
+    }, { summarize: () => 'PERSISTED_LARGE_COMPACT_SENTINEL' });
+    assert.equal(persisted.blocks.length, 1);
+    const blockRecord = (await artifactStore.list('session-1'))
+      .find((record) => record.source === 'history_compact_block');
+    assert.ok((blockRecord?.sizeBytes ?? 0) > 4_096, 'provenance JSON outgrows the token-derived byte cap');
+
+    const backend = new AiSdkBackend({
+      sessionId: 'session-1',
+      header: header(),
+      appendMessage: async () => {},
+      connection: connection(),
+      apiKey: 'sk-test',
+      modelId: 'mock-model-id',
+      permissionEngine: new PermissionEngine({ newId: () => 'permission-id', now: () => 1 }),
+      modelFactory: () => model,
+      tools: [],
+      newId: idGenerator(),
+      now: monotonicClock(),
+      contextBudget: {
+        name: 'history-compact-large-load-test',
+        maxHistoryEstimatedTokens: 10_000,
+        minRecentTurns: 1,
+        charsPerToken: 1,
+        historyCompact: {
+          enabled: true,
+          mode: 'lookup',
+          highWaterRatio: 0.000001,
+          targetRatio: 0.2,
+          tailEstimatedTokens: 1,
+          minRecentTurns: 1,
+          maxBlocks: 1,
+          maxEstimatedTokens: 4096,
+        },
+      },
+      loadHistoryCompact: (input) => loadHistoryCompactBlocksFromArtifacts(artifactStore, input),
+    });
+
+    for await (const event of backend.send({
+      turnId: 'turn-current',
+      text: 'continue after large persisted compact',
+      context: [],
+      runtimeContext: [
+        ...oldEvents,
+        runtimeTextEvent({
+          id: 'compact-large-recent',
+          turnId: 'turn-recent',
+          role: 'user',
+          author: 'user',
+          text: 'large recent retained context',
+        }),
+      ],
+    })) {
+      events.push(event);
+    }
+
+    const usage = events.find((event): event is Extract<SessionEvent, { type: 'token_usage' }> =>
+      event.type === 'token_usage'
+    );
+    assert.equal(usage?.contextBudget?.historyCompactBlocksLoaded, 1);
+    assert.equal(usage?.contextBudget?.historyCompactBlocksSelected, 1);
+    const prompt = JSON.stringify(compactPrompt(model));
+    assert.match(prompt, /PERSISTED_LARGE_COMPACT_SENTINEL/);
+    assert.equal(prompt.includes('large fold source fact 0'), false);
   });
 
   test('uses StoredMessage projection when RuntimeEvent tool results are unmatched', async () => {

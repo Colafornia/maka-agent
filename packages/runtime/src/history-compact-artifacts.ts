@@ -4,6 +4,7 @@ import type { ArtifactRecord, ArtifactSource } from '@maka/core';
 import {
   buildHistoryCompactBlockFromSummary,
   estimateTokens,
+  renderHistoryCompactBlock,
   validateHistoryCompactBlockShape,
   type HistoryCompactBlock,
   type HistoryCompactSourceArchiveRef,
@@ -132,7 +133,9 @@ export async function loadHistoryCompactBlocksFromArtifacts(
 ): Promise<HistoryCompactLoadResult> {
   const maxBlocks = input.maxBlocks ?? 1;
   const maxEstimatedTokens = input.maxEstimatedTokens ?? 2_048;
-  const maxBytes = input.maxBytes ?? maxEstimatedTokens * 4;
+  // The block JSON carries per-event provenance and grows with the folded
+  // event count; cap reads defensively by storage size, not by token budget.
+  const maxBytes = input.maxBytes ?? 1_048_576;
   const skippedReasonCounts: Record<string, number> = {};
   const blocks: HistoryCompactBlock[] = [];
   const records = await artifactStore.list(input.sessionId, { includeDeleted: true });
@@ -177,7 +180,9 @@ export async function loadHistoryCompactBlocksFromArtifacts(
       continue;
     }
     const block = parsed as HistoryCompactBlock;
-    const estimatedTokens = block.estimatedTokens ?? estimateTokens(read.text.length, 4);
+    // Never trust the persisted token estimate: recompute from the rendered
+    // model-visible text, which is what actually enters the prompt.
+    const estimatedTokens = estimateTokens(renderHistoryCompactBlock(block).length, 4);
     if (estimatedTokens > maxEstimatedTokens) {
       incrementHistoryCompactCount(skippedReasonCounts, 'max_total_tokens');
       continue;
