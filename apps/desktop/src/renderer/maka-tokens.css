@@ -188,6 +188,16 @@
   --ring:          oklch(from var(--foreground) l c h / 0.25);
   --state-hover-bg:    oklch(from var(--foreground) l c h / 0.04);
   --state-selected-bg: oklch(from var(--foreground) l c h / 0.065);
+  /* PR5 FOREGROUND-ALPHA-TOKEN-0: raw foreground-alpha tiers for component
+     washes that need a semi-transparent foreground over their backdrop
+     (NOT the solid --foreground-N tints, which mix with --background and
+     would change rendering — the ring would thicken, the wash would stop
+     tracking the backdrop). The file-attachment card uses these for its bg
+     (0.06), icon-tile (0.10), and inset ring (0.12); other components at
+     the same density can reuse the tier instead of a fresh alpha. */
+  --foreground-alpha-6:  oklch(from var(--foreground) l c h / 0.06);
+  --foreground-alpha-10: oklch(from var(--foreground) l c h / 0.10);
+  --foreground-alpha-12: oklch(from var(--foreground) l c h / 0.12);
   /* User bubble color is intentionally distinct from `--accent` so users can
      re-tint the accent without ruining chat legibility.
      PR-GRAY-CARD-LIFT-0: bubble shifts to neutral gray (hue 0)
@@ -1169,23 +1179,22 @@
     padding: var(--space-6) 0 var(--space-4) 0;
     display: flex;
     flex-direction: column;
-    /* PR-CHAT-CHROME-FOLLOWUP-0: looser separation BETWEEN turns so each
-       Q+A unit reads as its own block (the within-turn gap stays tight). */
-    gap: var(--space-6);
+    /* PR5 CHAT-TURN-SPACING-0: uniform 12px turn gap (between turns =
+       within turn) — the chat reads as a continuous coding-agent stream
+       instead of stacked Q+A blocks. */
+    gap: var(--space-3);
   }
 
   /* Turn grouping (per kenji UI-04): user msg + tools + assistant answer
-   * cluster into one visual unit. The section is just a flex container —
-   * the spacing between turns is established by the outer chat gap; spacing
-   * inside a turn is tighter so the unit reads as one work block. */
+   * cluster into one visual unit. The section is a flex container; both the
+   * between-turn and within-turn gaps are uniform (CHAT-TURN-SPACING-0), so
+   * a turn reads as one unit by grouping, not by tighter internal spacing. */
   .maka-turn {
     display: flex;
     flex-direction: column;
-    /* PR-CHAT-CHROME-FOLLOWUP-0: 4px → 8px. The parts of one turn (user
-       block, summary, tools, answer) were cramped; 8px gives a calmer
-       internal rhythm while still reading as one unit against the 24px
-       between-turn gap. */
-    gap: var(--space-2);
+    /* PR5 CHAT-TURN-SPACING-0: uniform 12px within-turn gap, matching the
+       between-turn gap (.maka-chat) — one density, no between/within split. */
+    gap: var(--space-3);
     max-width: var(--maka-chat-measure);
     margin: 0 auto;
     width: 100%;
