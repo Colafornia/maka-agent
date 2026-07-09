@@ -170,13 +170,58 @@ describe('Maka CLI runtime bootstrap', () => {
         assert.equal(backendInput.contextBudget?.name, 'cli-default-history-budget');
         assert.equal(backendInput.contextBudget?.maxHistoryEstimatedTokens, 32_000);
         assert.equal(backendInput.contextBudget?.activeToolResultPrune?.enabled, true);
-        assert.equal(backendInput.contextBudget?.semanticCompact?.enabled, true);
+        // In-turn semantic compaction is stripped for the CLI: it interrupts the
+        // live reply with a compaction notice for small savings. History/turn
+        // compaction stays.
+        assert.equal(backendInput.contextBudget?.semanticCompact, undefined);
         assert.equal(backendInput.contextBudget?.historyCompact?.enabled, true);
         assert.equal(backendInput.contextBudget?.historyCompact?.mode, 'read_write');
         assert.equal(backendInput.contextBudget?.historyCompact?.highWaterRatio, 1);
         assert.equal(backendInput.contextBudget?.historyCompact?.tailEstimatedTokens, 16_384);
         assert.equal(backendInput.contextBudget?.historyCompact?.minRecentTurns, 3);
       });
+    });
+  });
+
+  test('honors an explicit MAKA_CONTEXT_SEMANTIC_COMPACT opt-in', async () => {
+    await withCleanContextBudgetEnv(async () => {
+      process.env.MAKA_CONTEXT_SEMANTIC_COMPACT = 'on';
+      try {
+        await withWorkspace(async (workspaceRoot) => {
+          const connectionStore = createConnectionStore(workspaceRoot);
+          await connectionStore.create({
+            slug: 'local',
+            name: 'Local Ollama',
+            providerType: 'ollama',
+            defaultModel: 'llama3.2',
+          });
+
+          const context = await createMakaCliRuntimeContext({ workspaceRoot, cwd: '/repo' });
+          const session = await context.runtime.createSession({
+            cwd: context.cwd,
+            backend: 'ai-sdk',
+            llmConnectionSlug: context.target.connection.slug,
+            model: context.target.model,
+            permissionMode: 'bypass',
+            name: 'semantic-opt-in',
+          });
+          const runtimeDeps = (context.runtime as unknown as RuntimeWithPrivateDeps).deps;
+          const header = await runtimeDeps.store.readHeader(session.id);
+          const backend = await runtimeDeps.backends.build('ai-sdk', {
+            sessionId: session.id,
+            workspaceRoot,
+            header,
+            store: runtimeDeps.store,
+          });
+          const backendInput = (backend as unknown as { input: AiSdkBackendInput }).input;
+
+          // The CLI default strips semantic compaction, but an explicit env
+          // opt-in must reach the backend so the path stays exercisable.
+          assert.equal(backendInput.contextBudget?.semanticCompact?.enabled, true);
+        });
+      } finally {
+        delete process.env.MAKA_CONTEXT_SEMANTIC_COMPACT;
+      }
     });
   });
 
