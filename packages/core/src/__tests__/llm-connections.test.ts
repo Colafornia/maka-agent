@@ -71,6 +71,7 @@ describe('provider compatibility contract', () => {
       'deepinfra',
       'groq',
       'openrouter',
+      'alibaba',
       'cloudflare-workers-ai',
       'ollama-cloud',
       'ollama',
@@ -126,6 +127,7 @@ describe('provider compatibility contract', () => {
       'opencode-go',
       'groq',
       'openrouter',
+      'alibaba',
     ]);
     assert.deepEqual(CATALOG_PROVIDER_TYPES, [
       'kimi-coding-plan',
@@ -171,6 +173,7 @@ describe('provider compatibility contract', () => {
       'opencode-go',
       'groq',
       'openrouter',
+      'alibaba',
     ]);
 
     for (const orderField of ['readyOrder', 'catalogOrder', 'recommendedOrder'] as const) {

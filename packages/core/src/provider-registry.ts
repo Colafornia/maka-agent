@@ -311,6 +311,15 @@ const openrouterModelIds = toolCallingModelIds(
   GENERATED_MODELS_DEV_METADATA.openrouter,
   ['anthropic/claude-sonnet-5', 'openai/gpt-5.6-sol', 'x-ai/grok-4.5', 'deepseek/deepseek-v4-pro'],
 ).filter((id) => GENERATED_MODELS_DEV_METADATA.openrouter[id]?.lifecycle !== 'deprecated');
+const alibaba = GENERATED_MODELS_DEV_PROVIDER_FACTS.alibaba;
+if (alibaba.id !== 'alibaba' || alibaba.api !== 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1') {
+  throw new Error('models.dev Alibaba provider facts are missing the stable id or API');
+}
+const alibabaModelIds = toolCallingModelIds(
+  'Alibaba',
+  GENERATED_MODELS_DEV_METADATA.alibaba,
+  ['qwen3.7-plus'],
+);
 const vercel = GENERATED_MODELS_DEV_PROVIDER_FACTS.vercel;
 if (vercel.id !== 'vercel') {
   throw new Error('models.dev Vercel AI Gateway provider facts are missing stable id vercel');
@@ -1098,6 +1107,25 @@ const providerRegistry = {
     modelsDevId: openrouter.id,
     readyOrder: 40,
     catalogOrder: 40,
+  },
+  alibaba: {
+    label: alibaba.name,
+    description: 'Alibaba Cloud Qwen models for multimodal reasoning, coding, and tool use.',
+    baseUrl: alibaba.api,
+    authKind: 'api_key',
+    backendKind: 'ai-sdk',
+    fallbackModels: alibabaModelIds,
+    status: 'ready',
+    protocol: 'openai',
+    runtimeAdapter: { kind: 'openai-compatible', name: 'provider' },
+    modelDiscovery: { kind: 'protocol', filter: 'fallback-models' },
+    category: 'overseas',
+    catalogGroup: 'api',
+    catalogBadge: 'API',
+    signupUrl: 'https://modelstudio.console.alibabacloud.com/',
+    modelsDevId: alibaba.id,
+    readyOrder: 41,
+    catalogOrder: 41,
   },
   'cloudflare-workers-ai': {
     label: cloudflareWorkersAi.name,
