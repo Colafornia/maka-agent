@@ -4,16 +4,39 @@ import type { Locator } from '@playwright/test';
 async function expectPaletteHeaderGeometry(dialog: Locator): Promise<void> {
   const searchInput = dialog.getByRole('combobox', { name: '搜索命令、设置项或会话' });
   const closeButton = dialog.getByRole('button', { name: '关闭命令面板' });
-  const [inputBox, closeBox, paddingLeft] = await Promise.all([
+  const firstCommand = dialog.getByRole('option').first();
+  const [inputBox, closeBox, firstCommandBox, paddingLeft, leadingSearchIcons] = await Promise.all([
     searchInput.boundingBox(),
     closeButton.boundingBox(),
+    firstCommand.boundingBox(),
     searchInput.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft)),
+    dialog.locator('.maka-palette-search-icon svg').count(),
   ]);
-  if (!inputBox || !closeBox) throw new Error('Command palette header controls must have rendered bounds');
+  if (!inputBox || !closeBox || !firstCommandBox) throw new Error('Command palette controls must have rendered bounds');
 
   const gap = closeBox.x - (inputBox.x + inputBox.width);
   expect(gap).toBeGreaterThanOrEqual(8);
-  expect(paddingLeft).toBeGreaterThanOrEqual(10);
+  expect(paddingLeft).toBeGreaterThanOrEqual(8);
+  expect(leadingSearchIcons).toBe(1);
+  expect(firstCommandBox.height).toBeGreaterThanOrEqual(32);
+}
+
+async function expectCompactShortcutHints(dialog: Locator): Promise<void> {
+  const keys = dialog.locator('.maka-palette-footer kbd');
+  await expect(keys).toHaveCount(4);
+  for (const key of await keys.all()) {
+    const style = await key.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        height: element.getBoundingClientRect().height,
+        borderWidth: computed.borderWidth,
+        boxShadow: computed.boxShadow,
+      };
+    });
+    expect(style.height).toBe(16);
+    expect(style.borderWidth).toBe('0px');
+    expect(style.boxShadow).toBe('none');
+  }
 }
 
 test('command palette header geometry and dismissal stay intact', async ({ window: page }) => {
@@ -23,6 +46,7 @@ test('command palette header geometry and dismissal stay intact', async ({ windo
   await openButton.click();
   await expect(dialog).toBeVisible();
   await expectPaletteHeaderGeometry(dialog);
+  await expectCompactShortcutHints(dialog);
 
   await page.setViewportSize({ width: 520, height: 700 });
   await expect(dialog).toBeVisible();

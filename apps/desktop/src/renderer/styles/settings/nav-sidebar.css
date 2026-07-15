@@ -79,11 +79,6 @@
   font-weight: var(--font-weight-bold);
 }
 
-.settingsSidebar header .maka-shortcut-kbd {
-  font-size: var(--font-size-caption);
-  padding: 0 var(--space-1);
-}
-
 .settingsSidebar nav {
   min-height: 0;
   display: grid;
@@ -629,9 +624,6 @@
   background: oklch(from var(--focus-ring) l c h / 0.04);
 }
 
-.settingsField input:focus-visible,
-.settingsField textarea:focus-visible,
-.settingsFormGrid input:focus-visible,
 .settingsFormGrid select:focus-visible {
   outline: none;
   border-color: var(--focus-ring);
@@ -653,36 +645,6 @@
   .settingsModal [role="switch"] > span {
     transition: none;
   }
-}
-
-/* PR-SETTINGS-SWITCH-SCALE-0 (round 3/15) + switch-geometry round 8:
-   the BaseSwitch shared adapter renders at 36×20 with a 16×16 thumb —
-   too small inside the roomy settings rows. ONE scope for the bigger
-   size: every switch inside the settings modal (`.settingsModal`), so
-   pages that aren't built from settingsFormRow/settingsField (数据
-   导入导出's category list, ad-hoc rows) can't fall back to the compact
-   scale and split the app into two switch sizes.
-   Geometry: 46px track − 2×1px border − 22px thumb − 2px inset = 20px
-   checked travel — SYMMETRIC 2px insets on both sides (the old 22px
-   value parked the thumb flush against the right border while the
-   unchecked side kept a 2px gap).
-   The overrides write the `translate:` property (not `transform:`)
-   because Tailwind v4's translate-x utilities emit `translate:` — a
-   `transform` override would stack additively instead of replacing. */
-.settingsModal [role="switch"] {
-  height: 26px;
-  width: 46px;
-  border-radius: var(--radius-pill);
-}
-
-.settingsModal [role="switch"] > span {
-  height: 22px;
-  width: 22px;
-  translate: 2px 0;
-}
-
-.settingsModal [role="switch"][data-checked] > span {
-  translate: 20px 0;
 }
 
 .settingsFormRow strong,
@@ -710,13 +672,6 @@
   margin-top: var(--space-1);
   color: var(--warning-text, var(--info-text));
 }
-
-/* PR-USE-SHADCN-BASE-UI-SWITCH (2026-06-22): the bespoke .settingsSwitch
-   rules were removed because the local `Switch(...)` adapter now renders
-   the shared `BaseUiSwitch` (Base UI Switch.Root) which carries its own
-   Tailwind utility styling (h-5 w-9 track, h-4 w-4 thumb, data-checked
-   bg-control, focus ring tied to --ring). Same external API shape;
-   ~50 lines of duplicate CSS deleted. */
 
 .settingsFormGrid {
   display: grid;

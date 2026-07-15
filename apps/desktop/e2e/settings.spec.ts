@@ -1,5 +1,21 @@
 import { test, expect } from './fixtures';
 
+test('settings switches keep the compact shared control geometry', async ({ window: page }) => {
+  await page.getByRole('button', { name: '展开侧边栏' }).click();
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('main', { name: '设置内容' }).getByRole('button', { name: '通用', exact: true }).click();
+
+  const privacySwitch = page.getByRole('switch', { name: '启用隐身模式' });
+  await expect(privacySwitch).toBeVisible();
+  const box = await privacySwitch.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBe(32);
+  expect(box!.height).toBe(18);
+  await expect.poll(
+    () => privacySwitch.evaluate((element) => getComputedStyle(element).boxShadow),
+  ).toBe('none');
+});
+
 /**
  * Settings take effect: open settings, switch the theme to dark, and confirm
  * the <html> root picks up the `dark` class (theme.ts applies it via
@@ -19,6 +35,48 @@ test('changing the theme in settings applies to the UI', async ({ window: page }
   await expect.poll(
     async () => page.evaluate(() => document.documentElement.classList.contains('dark')),
   ).toBe(true);
+});
+
+test('settings textarea grows with content and scrolls only at its shared cap', async ({ window: page }) => {
+  await page.getByRole('button', { name: '展开侧边栏' }).click();
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('main', { name: '设置内容' }).getByRole('button', { name: '通用', exact: true }).click();
+
+  const textarea = page.getByRole('textbox', { name: '助手语气偏好' });
+  await expect(textarea).toBeVisible();
+  await expect(textarea).toHaveCSS('resize', 'none');
+  await expect(textarea).toHaveCSS('field-sizing', 'content');
+
+  const initialHeight = await textarea.evaluate((element) => element.getBoundingClientRect().height);
+  await textarea.fill(Array.from({ length: 7 }, (_, index) => `偏好 ${index + 1}`).join('\n'));
+  const grownHeight = await textarea.evaluate((element) => element.getBoundingClientRect().height);
+  expect(grownHeight).toBeGreaterThan(initialHeight);
+
+  await textarea.fill(Array.from({ length: 30 }, (_, index) => `偏好 ${index + 1}`).join('\n'));
+  const capped = await textarea.evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(capped.height).toBeLessThanOrEqual(320);
+  expect(capped.scrollHeight).toBeGreaterThan(capped.clientHeight);
+
+  await page.getByRole('main', { name: '设置内容' }).getByRole('button', { name: '记忆', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '记忆内容' })).toHaveCSS('resize', 'none');
+  await expect(page.getByRole('textbox', { name: 'MEMORY.md 内容' })).toHaveCSS('resize', 'none');
+});
+
+test('shared settings input owns its desktop focus chrome', async ({ window: page }) => {
+  await page.getByRole('button', { name: '展开侧边栏' }).click();
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('main', { name: '设置内容' }).getByRole('button', { name: '通用', exact: true }).click();
+
+  const displayName = page.getByRole('textbox', { name: '显示名称' });
+  await expect(displayName).toHaveCSS('box-shadow', 'none');
+  await displayName.focus();
+  const focusShadow = await displayName.evaluate((element) => getComputedStyle(element).boxShadow);
+  expect(focusShadow).not.toBe('none');
+  expect(focusShadow).not.toContain('inset');
 });
 
 test('remote access opens a channel detail from the overview and returns', async ({ window: page }) => {
