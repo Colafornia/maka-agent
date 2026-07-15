@@ -92,12 +92,11 @@ function isFailed(status: ToolActivityItem['status']): boolean {
 /**
  * Build the summary line for a trow: one clause per distinct activity kind in
  * first-seen order, joined with "，". With `{ live: true }` (a multi-tool
- * running group) the line is prefixed with "正在" and the trailing "N 个失败"
- * clause is suppressed — the failed count changes mid-group, and errored tools
- * still force-open their disclosure (trowNeedsAttention), so the failure signal
- * is not lost, just kept off the jittering summary line. Settled (default)
- * includes the "N 个失败" clause when any tool errored. A failed tool still
- * counts toward its type bucket (a failed read is "读取 1 个文件" + "1 个失败").
+ * running group) the line is prefixed with "正在". The "N 个失败" clause is
+ * included whenever any tool errored — errored tools stay collapsed, so the
+ * summary line is the failure signal and must carry the count live, not only
+ * once settled. A failed tool still counts toward its type bucket (a failed
+ * read is "读取 1 个文件" + "1 个失败").
  */
 export function summarizeTrowTools(
   items: readonly ToolActivityItem[],
@@ -113,11 +112,7 @@ export function summarizeTrowTools(
     if (isFailed(item.status)) failed += 1;
   }
   const clauses = order.map((kind) => KIND_CLAUSE[kind](counts.get(kind) ?? 0));
-  // Running summary prioritizes stability: the failed count changes as tools
-  // error mid-group, so it is shown only once the group settles. Errored tools
-  // still force-open their disclosure (trowNeedsAttention), so the failure
-  // signal is not lost — it just doesn't jitter the summary line mid-run.
-  if (!options?.live && failed > 0) clauses.push(`${failed} 个失败`);
+  if (failed > 0) clauses.push(`${failed} 个失败`);
   const base = clauses.join('，');
   return options?.live ? `正在${base}` : base;
 }
@@ -131,13 +126,12 @@ export function isTrowRunning(items: readonly ToolActivityItem[]): boolean {
 }
 
 /**
- * True when the group must force itself open: a permission prompt or an error
- * banner is inside. Both are actionable/diagnostic content that a collapsed
- * summary line would hide — the old boxed cards kept errored tools expanded,
- * and the trow keeps that behavior.
+ * True when the group must force itself open: a permission prompt is inside.
+ * A prompt is actionable content that a collapsed summary line would hide. An
+ * errored tool no longer force-opens the group — the settled summary line
+ * keeps the failure signal (「N 个失败」 in destructive color), and the error
+ * banner + output stay one click away behind the disclosure.
  */
 export function trowNeedsAttention(items: readonly ToolActivityItem[]): boolean {
-  return items.some(
-    (item) => item.status === 'waiting_permission' || item.status === 'errored',
-  );
+  return items.some((item) => item.status === 'waiting_permission');
 }

@@ -320,7 +320,14 @@ function toolStatusLabel(item: ToolActivityItem): string {
   return STATUS_LABEL[item.status];
 }
 
-export function ToolActivity(props: { items: ToolActivityItem[] }) {
+export function ToolActivity(props: {
+  items: ToolActivityItem[];
+  /** Controlled open state applied to every card. When omitted each card
+   *  manages its own disclosure (permission prompts open; errored tools stay
+   *  collapsed). Passed by tests to render the expanded state in static
+   *  markup; production callers leave it uncontrolled. */
+  open?: boolean;
+}) {
   return (
     <section className={toolVariants({ part: 'container' })} aria-label="工具调用记录">
       <header className={toolVariants({ part: 'container-header' })}>
@@ -328,25 +335,28 @@ export function ToolActivity(props: { items: ToolActivityItem[] }) {
         <span className={toolVariants({ part: 'count' })} aria-label={`${props.items.length} 次调用`}>{props.items.length}</span>
       </header>
       {props.items.map((item) => (
-        <ToolActivityCard key={item.toolUseId} item={item} />
+        <ToolActivityCard key={item.toolUseId} item={item} open={props.open} />
       ))}
     </section>
   );
 }
 
-function ToolActivityCard({ item }: { item: ToolActivityItem }) {
-  // Ordinary work stays summarized. A new permission/error state opens the
-  // diagnostics, while an explicit user toggle survives later ordinary status
-  // changes. See disclosure-collapsible-contract: defaultOpen is banned here.
+function ToolActivityCard({ item, open: openProp }: { item: ToolActivityItem; open?: boolean }) {
+  // Ordinary work stays summarized. A new permission prompt opens the
+  // diagnostics (it is actionable); an errored tool stays collapsed — the
+  // failure signal lives on the summary line. An explicit user toggle survives
+  // later ordinary status changes. See disclosure-collapsible-contract:
+  // defaultOpen is banned here.
   const presentation = deriveToolActivityPresentation(item);
   const disclosure = useToolDisclosure(presentation);
+  const open = openProp ?? disclosure.open;
   const duration = formatDuration(item.durationMs);
   return (
     <Collapsible
       data-slot="tool"
       className={toolVariants({ part: 'item' })}
       data-status={item.status}
-      open={disclosure.open}
+      open={open}
       onOpenChange={disclosure.setOpen}
     >
       <CollapsibleTrigger className={toolVariants({ part: 'header' })}>
@@ -532,7 +542,8 @@ function ToolTrowGroup({ items }: { items: ToolActivityItem[] }) {
   // the whole-group trowNeedsAttention below.
   const firstPresentation = deriveToolActivityPresentation(items[0]!);
   // Groups share the same disclosure state as a single row: ordinary work is
-  // summarized; a new permission/error state opens diagnostics; manual choice
+  // summarized; a new permission prompt opens diagnostics (errors stay
+  // collapsed — the summary line carries the failure signal); manual choice
   // survives ordinary status changes.
   const disclosure = useToolDisclosure({ ...firstPresentation, needsAttention: attention });
   // #646: a group settles when all its tools do; the settle fade plays only if
@@ -588,8 +599,9 @@ function ToolTrowGroup({ items }: { items: ToolActivityItem[] }) {
 
 /**
  * A single flat, borderless tool row inside a multi-tool trow. Ordinary work
- * is collapsed; permission prompts and errors open for attention, and a user's
- * manual choice survives later ordinary status changes. No card frame
+ * is collapsed; permission prompts open for attention (errors stay collapsed —
+ * the summary line carries the failure signal), and a user's manual choice
+ * survives later ordinary status changes. No card frame
  * (`toolVariants({item})`), per the flat trow visual language.
  */
 function ToolTrowRow({ item }: { item: ToolActivityItem }) {
@@ -609,6 +621,9 @@ function ToolTrowRow({ item }: { item: ToolActivityItem }) {
   // word. Running shimmers the model's intent (or the friendly tool name);
   // settled prefers the intent, falls back to the display name.
   const summaryTone = errored ? 'text-[color:var(--destructive)]' : 'text-[color:var(--muted-foreground)]';
+  // An errored row stays collapsed, so the destructive tint is not enough —
+  // the failure is spelled out as a word on the row label.
+  const rowLabel = item.intent ? formatToolIntent(item.intent) : resolveToolDisplayName(item);
   return (
     <Collapsible className="flex flex-col" data-trow="row" data-status={item.status} data-settled={settled ? 'true' : undefined} open={disclosure.open} onOpenChange={disclosure.setOpen}>
       <CollapsibleTrigger className="group flex w-full items-center gap-2 py-0.5 text-left">
@@ -619,10 +634,8 @@ function ToolTrowRow({ item }: { item: ToolActivityItem }) {
         />
         {running ? (
           <TextShimmer active delayed className="min-w-0 truncate text-[length:var(--font-size-base)]">{presentation.summary}</TextShimmer>
-        ) : item.intent ? (
-          <span className={cn('min-w-0 truncate text-[length:var(--font-size-base)]', summaryTone)}>{formatToolIntent(item.intent)}</span>
         ) : (
-          <span className={cn('min-w-0 truncate text-[length:var(--font-size-base)]', summaryTone)}>{resolveToolDisplayName(item)}</span>
+          <span className={cn('min-w-0 truncate text-[length:var(--font-size-base)]', summaryTone)}>{errored ? `${rowLabel} · 失败` : rowLabel}</span>
         )}
         {/* Quiet meta sits right after the label (near the text, not pinned to
             the far edge): duration + chevron ride in on hover / open, matching

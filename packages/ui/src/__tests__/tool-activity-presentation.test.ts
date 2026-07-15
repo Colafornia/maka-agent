@@ -107,7 +107,7 @@ describe('tool activity presentation', () => {
     );
   });
 
-  it('opens a newly errored tool even after an earlier manual collapse', () => {
+  it('keeps a tool collapsed when it errors, even after an earlier manual collapse', () => {
     const running: ToolActivityItem = {
       toolUseId: 'tool-error',
       toolName: 'Bash',
@@ -118,15 +118,46 @@ describe('tool activity presentation', () => {
       ...running,
       status: 'errored',
     };
+
+    // An error is not an attention state: the initial disclosure stays closed…
+    assert.deepEqual(
+      createToolDisclosureState(deriveToolActivityPresentation(errored)),
+      { open: false, manuallySet: false },
+    );
+
+    // …and an earlier manual collapse is not overridden when the tool errors.
     const collapsed = setToolDisclosureOpen(
       createToolDisclosureState(deriveToolActivityPresentation(running)),
       false,
     );
-
     assert.deepEqual(
       syncToolDisclosureState(collapsed, deriveToolActivityPresentation(errored)),
-      { open: true, manuallySet: false },
+      { open: false, manuallySet: true },
     );
+  });
+
+  it('keeps a settled errored tool collapsed while the summary carries the failure signal', () => {
+    const markup = renderTool({
+      toolUseId: 'tool-errored-collapsed',
+      toolName: 'Bash',
+      activityKind: 'command',
+      intent: '跑测试',
+      status: 'errored',
+      args: { command: 'npm test' },
+      result: {
+        kind: 'terminal',
+        cwd: '/tmp/maka',
+        cmd: 'npm test',
+        status: 'failed',
+        exitCode: 1,
+        output: pipeOutput('', 'Error: boom\n'),
+      },
+    });
+
+    // Collapsed: the diagnostic body is not mounted…
+    assert.doesNotMatch(markup, /Error: boom/);
+    // …but the failure stays visible on the summary line.
+    assert.match(markup, /1 个失败/);
   });
 
   it('shows diagnostic flags without exposing transport chunk counts', () => {
@@ -143,6 +174,7 @@ describe('tool activity presentation', () => {
         ],
         outputTruncated: true,
       } satisfies ToolActivityItem],
+      open: true,
     }));
 
     assert.doesNotMatch(markup, /stdout\s+2/i);
@@ -170,6 +202,7 @@ describe('tool activity presentation', () => {
           output: pipeOutput('packages/ui ok\n', 'Error: boom\n'),
         },
       } satisfies ToolActivityItem],
+      open: true,
     }));
 
     // Command without shell prompt; no cwd / success-style exit badge bar.
@@ -204,6 +237,7 @@ describe('tool activity presentation', () => {
         args: { command: 'npm test' },
         result: malformed,
       } satisfies ToolActivityItem],
+      open: true,
     }));
 
     assert.match(markup, /npm test/);
@@ -412,6 +446,7 @@ describe('tool activity presentation', () => {
           value: { results: [], error: 'permission denied', ok: false },
         },
       } satisfies ToolActivityItem],
+      open: true,
     }));
 
     assert.match(markup, /permission denied/);
@@ -614,6 +649,7 @@ describe('tool activity presentation', () => {
           },
         },
       } satisfies ToolActivityItem],
+      open: true,
     }));
 
     assert.match(markup, /未排队：echo x\\n/);
