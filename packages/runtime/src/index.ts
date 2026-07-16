@@ -650,15 +650,21 @@ export {
   buildDeterministicProcessStateActiveFullCompactSummary,
   buildActiveFullCompactBlockFromSummary,
   buildActiveFullCompactSourceIndex,
+  buildActiveCompactionHeadAnchor,
+  activeCompactionMessageSignature,
   estimateActiveFullCompactTokens,
   renderActiveFullCompactBlock,
   rewriteActiveFullCompactInMessages,
   selectActiveFullCompactCoveredSpan,
+  selectActiveCompactionSafeSpan,
   validateActiveFullCompactBlockForSourceIndex,
   validateActiveFullCompactBlockShape,
 } from './active-full-compact.js';
 export type {
   ActiveFullCompactArchiveRef,
+  ActiveCompactionHeadAnchor,
+  ActiveCompactionSafeSpanPolicy,
+  ActiveCompactionSafeSpanSelection,
   ActiveFullCompactBlock,
   ActiveFullCompactContentKind,
   ActiveFullCompactCoverage,
@@ -681,6 +687,7 @@ export {
   renderSemanticCompactBlock,
   rewriteSemanticCompactInMessages,
   semanticCompactBlockToModelMessage,
+  semanticCompactBlockToCompactionBoundary,
 } from './semantic-compact.js';
 export type {
   SemanticCompactBlock,

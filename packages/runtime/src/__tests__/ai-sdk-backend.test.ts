@@ -4034,9 +4034,11 @@ describe('AiSdkBackend usage telemetry', () => {
     const llmRecords: LlmCallRecord[] = [];
     const largeBody = 'SECRET_PAYLOAD_SHOULD_BE_ARCHIVED'.repeat(200);
     let streamCalls = 0;
+    const prompts: unknown[] = [];
     const model = new MockLanguageModelV3({
-      doStream: async () => {
+      doStream: async ({ prompt }) => {
         streamCalls += 1;
+        prompts.push(prompt);
         const chunks: LanguageModelV3StreamPart[] = streamCalls === 1
           ? [
               { type: 'stream-start', warnings: [] },
@@ -4045,6 +4047,21 @@ describe('AiSdkBackend usage telemetry', () => {
                 toolCallId: 'tool-1',
                 toolName: 'Read',
                 input: JSON.stringify({ path: 'notes.md' }),
+              },
+              {
+                type: 'finish',
+                finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+                usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } },
+              },
+            ]
+          : streamCalls === 2
+          ? [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'tool-call',
+                toolCallId: 'tool-2',
+                toolName: 'Bash',
+                input: JSON.stringify({ cmd: 'continue' }),
               },
               {
                 type: 'finish',
@@ -4076,6 +4093,12 @@ describe('AiSdkBackend usage telemetry', () => {
         parameters: z.object({ path: z.string() }),
         permissionRequired: false,
         impl: async () => ({ body: largeBody }),
+      }, {
+        name: 'Bash',
+        description: 'Bash description',
+        parameters: z.object({ cmd: z.string() }),
+        permissionRequired: false,
+        impl: async () => ({ body: 'NEWEST_RESULT_STAYS_VISIBLE' }),
       }],
       contextBudget: {
         activeToolResultPrune: { enabled: true, maxCurrentResultEstimatedTokens: 1 },
@@ -4099,7 +4122,14 @@ describe('AiSdkBackend usage telemetry', () => {
       | (Extract<SessionEvent, { type: 'token_usage' }> & { contextBudget?: Record<string, unknown> })
       | undefined;
     const recordContextBudget = llmRecords[0]?.contextBudget as Record<string, unknown> | undefined;
-    assert.equal(streamCalls, 2);
+    assert.equal(streamCalls, 3);
+    const secondPrompt = JSON.stringify(prompts[1]);
+    assert.match(secondPrompt, /SECRET_PAYLOAD_SHOULD_BE_ARCHIVED/);
+    assert.doesNotMatch(secondPrompt, /maka\.active_archived_tool_result/);
+    const thirdPrompt = JSON.stringify(prompts[2]);
+    assert.doesNotMatch(thirdPrompt, /SECRET_PAYLOAD_SHOULD_BE_ARCHIVED/);
+    assert.match(thirdPrompt, /artifact-tool-1/);
+    assert.match(thirdPrompt, /NEWEST_RESULT_STAYS_VISIBLE/);
     for (const contextBudget of [usageMessage?.contextBudget, usageEvent?.contextBudget, recordContextBudget]) {
       assert.equal(contextBudget?.activePrunedToolResults, 1);
       assert.equal(contextBudget?.activeArchiveFailures, undefined);
@@ -4107,7 +4137,7 @@ describe('AiSdkBackend usage telemetry', () => {
     }
   });
 
-  test('active full compact replaces the next step prompt after active tool-result prune', async () => {
+  test('active full compact sees the fresh tool result before active tool-result prune', async () => {
     const messages: unknown[] = [];
     const events: SessionEvent[] = [];
     const llmRecords: LlmCallRecord[] = [];
@@ -4195,7 +4225,7 @@ describe('AiSdkBackend usage telemetry', () => {
     assert.equal(recordedBlocks[0]?.kind, 'maka.active_full_compact_block');
     assert.equal(recordedBlocks[0]?.turnId, 'turn-1');
     assert.equal((recordedBlocks[0]?.sourceRefs.length ?? 0) > 0, true);
-    assert.match(JSON.stringify(recordedBlocks[0]), /artifact-tool-1/);
+    assert.doesNotMatch(JSON.stringify(recordedBlocks[0]), /artifact-tool-1/);
     const secondPromptMessages = model.doStreamCalls[1]?.prompt ?? [];
     const secondPrompt = JSON.stringify(model.doStreamCalls[1]?.prompt.map((message) => ({
       role: message.role,
@@ -4208,7 +4238,7 @@ describe('AiSdkBackend usage telemetry', () => {
     assert.equal(secondPromptMessages.some((message) =>
       message.role === 'system' && JSON.stringify(message.content).includes('maka_active_full_compact_block')
     ), false);
-    assert.match(secondPrompt, /artifact-tool-1/);
+    assert.doesNotMatch(secondPrompt, /artifact-tool-1/);
     assert.equal(secondPrompt.includes('ACTIVE_FULL_COMPACT_RAW_TOOL_OUTPUT'), false);
     assert.doesNotMatch(secondPrompt, /providerSourceIds=/);
     assert.doesNotMatch(secondPrompt, /bodySha256=/);
@@ -4222,7 +4252,7 @@ describe('AiSdkBackend usage telemetry', () => {
       | undefined;
     const recordContextBudget = llmRecords[0]?.contextBudget as Record<string, unknown> | undefined;
     for (const contextBudget of [usageMessage?.contextBudget, usageEvent?.contextBudget, recordContextBudget]) {
-      assert.equal(contextBudget?.activePrunedToolResults, 1);
+      assert.equal(contextBudget?.activePrunedToolResults, undefined);
       const decisions = contextBudget?.compactionDecisions as Array<Record<string, unknown>> | undefined;
       assert.equal(decisions?.some((decision) =>
         decision.boundaryKind === 'activeFullCompact' && decision.decision === 'replaced'
@@ -4305,24 +4335,20 @@ describe('AiSdkBackend usage telemetry', () => {
     const events: SessionEvent[] = [];
     const llmRecords: LlmCallRecord[] = [];
     const recordedBlocks: SemanticCompactBlock[] = [];
+    const recordedActiveFullBlocks: ActiveFullCompactBlock[] = [];
     const largeBody = 'SEMANTIC_COMPACT_RAW_TOOL_OUTPUT'.repeat(180);
     let streamCalls = 0;
+    let archiveCalls = 0;
     const model = new MockLanguageModelV3({
       doGenerate: {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            current_objective: 'Finish the benchmark task.',
-            user_constraints: ['Continue from public provider-visible context only.'],
-            important_files_and_artifacts: [],
-            commands_and_results: ['Read returned a large raw tool output.'],
-            errors_and_fixes: [],
-            failed_hypotheses: [],
-            operational_state: ['Continue in the same session.'],
-            public_verification_state: 'No verifier result claimed.',
-            remaining_work: ['Continue after compact.'],
-            next_action: 'Use the preserved recent tail to continue.',
-            archive_refs_to_reread_if_needed: [],
+            established_findings: ['Read returned a large raw tool output.'],
+            decisions: [],
+            failed_paths: [],
+            partial_work_product: [],
+            action_in_progress: 'Use the preserved recent execution episode to continue.',
           }),
         }],
         finishReason: { unified: 'stop', raw: 'stop' },
@@ -4342,6 +4368,21 @@ describe('AiSdkBackend usage telemetry', () => {
                 toolCallId: 'tool-semantic',
                 toolName: 'Read',
                 input: JSON.stringify({ path: 'large.log' }),
+              },
+              {
+                type: 'finish',
+                finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+                usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } },
+              },
+            ]
+          : streamCalls === 2
+          ? [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'tool-call',
+                toolCallId: 'tool-semantic-tail',
+                toolName: 'Read',
+                input: JSON.stringify({ path: 'next.log' }),
               },
               {
                 type: 'finish',
@@ -4372,10 +4413,13 @@ describe('AiSdkBackend usage telemetry', () => {
         description: 'Read description',
         parameters: z.object({ path: z.string() }),
         permissionRequired: false,
-        impl: async () => ({ body: largeBody }),
+        impl: async ({ path }) => ({
+          body: path === 'large.log' ? largeBody : 'FRESH_SEMANTIC_TAIL_RESULT',
+        }),
       }],
       contextBudget: {
         charsPerToken: 1,
+        activeToolResultPrune: { enabled: true, maxCurrentResultEstimatedTokens: 1 },
         semanticCompact: {
           enabled: true,
           mode: 'replace',
@@ -4383,10 +4427,24 @@ describe('AiSdkBackend usage telemetry', () => {
           minRecentMessages: 0,
           maxActiveEstimatedTokens: 1,
           highWaterRatio: 0.1,
+          minSafePrefixEstimatedTokens: 1,
+          minNewPrefixEstimatedTokens: 1,
           maxSummaryEstimatedTokens: 1024,
           minSavingsTokens: 1,
           minSavingsRatio: 0,
         },
+        activeFullCompact: {
+          enabled: true,
+          minStepNumber: 1,
+          maxActiveEstimatedTokens: 1_000_000,
+          highWaterRatio: 0.1,
+          minRecentMessages: 0,
+          maxSummaryEstimatedTokens: 1024,
+        },
+      },
+      archiveToolResult: async () => {
+        archiveCalls += 1;
+        return { artifactId: 'archived-covered-semantic-result' };
       },
       newId: idGenerator(),
       now: monotonicClock(),
@@ -4396,26 +4454,67 @@ describe('AiSdkBackend usage telemetry', () => {
       recordSemanticCompactBlock: (block) => {
         recordedBlocks.push(block);
       },
+      recordActiveFullCompactBlock: (block) => {
+        recordedActiveFullBlocks.push(block);
+      },
     });
 
     for await (const event of backend.send({ turnId: 'turn-1', text: 'hi', context: [] })) {
       events.push(event);
     }
 
-    assert.equal(streamCalls, 2);
+    assert.equal(streamCalls, 3);
     assert.equal(model.doGenerateCalls.length, 1);
+    assert.match(
+      JSON.stringify(model.doGenerateCalls[0]?.prompt),
+      /archived-covered-semantic-result/,
+      'the summarizer must accept an active-pruned result in an older completed episode',
+    );
+    assert.doesNotMatch(JSON.stringify(model.doGenerateCalls[0]?.prompt), /SEMANTIC_COMPACT_RAW_TOOL_OUTPUT/);
+    assert.equal(archiveCalls, 1, 'covered raw results may become archived without invalidating projection lineage');
     assert.equal(recordedBlocks.length, 1);
+    assert.equal(recordedActiveFullBlocks.length, 0, 'one step must accept at most one compaction replacement');
     assert.equal(recordedBlocks[0]?.kind, 'maka.semantic_compact_block');
     const secondPrompt = JSON.stringify(model.doStreamCalls[1]?.prompt.map((message) => ({
       role: message.role,
       content: message.content,
     })));
-    assert.match(secondPrompt, /maka_semantic_compact_block/);
-    assert.doesNotMatch(secondPrompt, /SEMANTIC_COMPACT_RAW_TOOL_OUTPUT/);
+    assert.doesNotMatch(secondPrompt, /maka_semantic_compact_block/);
+    assert.match(secondPrompt, /SEMANTIC_COMPACT_RAW_TOOL_OUTPUT/);
+    assert.doesNotMatch(secondPrompt, /archived-covered-semantic-result/);
+    const secondPromptMessages = model.doStreamCalls[1]?.prompt ?? [];
+    assert.equal(secondPromptMessages[0]?.role, 'user', 'the exact user anchor stays at the head');
+    const thirdPromptMessages = model.doStreamCalls[2]?.prompt ?? [];
+    const semanticProjection = thirdPromptMessages.find((message) =>
+      JSON.stringify(message.content).includes('maka_semantic_compact_block')
+    );
+    assert.equal(
+      semanticProjection?.role,
+      'assistant',
+      "the provider-facing projection is the model's own continuation checkpoint",
+    );
+    assert.equal(
+      thirdPromptMessages.filter((message) => message.role === 'user').length,
+      1,
+      'semantic replacement must not append a second user instruction',
+    );
+    const thirdPrompt = JSON.stringify(model.doStreamCalls[2]?.prompt.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })));
+    assert.match(thirdPrompt, /maka_semantic_compact_block/);
+    assert.match(thirdPrompt, /FRESH_SEMANTIC_TAIL_RESULT/);
+    assert.doesNotMatch(thirdPrompt, /SEMANTIC_COMPACT_RAW_TOOL_OUTPUT/);
+    assert.doesNotMatch(thirdPrompt, /archived-covered-semantic-result/);
+    assert.equal(
+      model.doStreamCalls[2]?.prompt.filter((message) => message.role === 'user').length,
+      1,
+      'projection replay after active pruning must retain the exact single user anchor',
+    );
 
     const semanticRecord = llmRecords.find((record) => record.callKind === 'semantic_compact');
     assert.ok(semanticRecord, 'expected semantic compact LLM record');
-    assert.match(semanticRecord.callId ?? '', /^semantic_compact_turn-1_1_/);
+    assert.match(semanticRecord.callId ?? '', /^semantic_compact_turn-1_2_/);
     assert.equal(semanticRecord.inputTokens, 21);
     assert.equal(semanticRecord.outputTokens, 13);
     assert.equal(semanticRecord.cacheHitInputTokens, 2);

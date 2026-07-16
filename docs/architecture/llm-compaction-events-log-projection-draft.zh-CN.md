@@ -403,11 +403,21 @@ Maka 当前至少有三类上下文缩减：
 |---|---|---|---|---|
 | History LLM compaction | 旧 RuntimeEvent prefix | Turn 之间、构建 prior history 时 | V2 checkpoint 记录进 AgentRun event ledger | 本章主体 |
 | Active Tool Result Prune | 当前 Turn 的 provider-visible tool result | 同一 Turn 的下一 step 前 | raw result 先归档；placeholder 只改当前 messages | 第二章主体 |
-| `semanticCompact` | 当前 active-loop messages，加可用的 Turn RuntimeEvent refs | `prepareStep` | `SemanticCompactBlock` 是 best-effort diagnostic record；accepted messages 保存在当前 backend projection | 相邻机制，不等同于 V2 checkpoint |
+| `semanticCompact` | 当前 user head anchor 之后、open protocol tail 之前的 completed middle span，加可用的 Turn RuntimeEvent refs | `prepareStep` | V2 `SemanticCompactBlock` 是 best-effort diagnostic record；accepted messages 保存在当前 backend projection | Attention shaping，相邻机制，不等同于 V2 checkpoint |
 
 它们共享“不要修改 canonical source”的方向，但保证强度不同。
 
-尤其是当前 `semanticCompact`：它会用 LLM 对 active provider-message span 生成结构化 summary，校验 coverage 与 savings，并在后续 AI SDK steps 复用 accepted projection；但其 source index 可以依赖 invocation-local `ModelMessage`，block recorder 失败也不会撤销已经接受的 provider projection。因此它不是 V2 history checkpoint 那种“durable append 成功后才进入 replay”的同一协议。
+当前 `semanticCompact` 把原始 current-user message 当作不可改写的 head anchor。Runtime 只选择 anchor 之后由完整 assistant step 与完整 tool call/result pairs 组成的连续 completed span；最新一个 completed execution episode，以及第一个未完成 provider episode 及其后内容，都保持为 exact tail。LLM 只生成 bounded continuation delta：已经确认的发现、已经做出的决策、失败路径、部分工作产物和正在执行的动作；不重复 exact head anchor 已经携带的目标与约束。attention compaction 在总 active context 超过 256K estimated tokens 前保持休眠；越过该水位后，completed span 还需达到 4K，rolling successor 也需新增 4K completed raw history。
+
+精确 head anchor 始终保持为 `user` message。LLM 生成的 continuation projection 以 `assistant` message 注入，因为它表达的是模型自身已经完成的执行历史，而不是一条新的用户指令。这样可以避免把 `head anchor + projection` 变成连续两条 user message，进而导致 OpenAI-compatible 模型重新开始任务发现。该 message 不注入任何 runtime 推导的 state card。
+
+Active tool-result pruning 还必须完整保留最新 completed provider step 的结果。`prepareStep` 发生在这些结果第一次可能发送给模型之前；如果此时就 prune，相当于模型尚未消费证据，证据便已被归档。只有更新的 step 完成后，前一步结果才进入 prune 候选；semantic compaction 仍可总结最新结果，因为它的 LLM projection 会继续携带被选中的证据。
+
+一旦 semantic projection 被接纳，后续 active pruning 对它已覆盖的 source 只是表示形式变化。Runtime 不再要求 provider-visible message 的字节级一致，而是通过稳定 lineage identity（tool call、tool name、payload shape 和原始 body hash）将 raw Tool Result 与 archive placeholder 识别为同一条 source。其他 source 字段仍须精确匹配。这样既能让 accepted projection 穿过 pruning 继续生效，也不会让无关的历史变更冒充同一段 coverage。
+
+Provider 可见的 continuation 只包含 exact head anchor、LLM 生成的 continuation delta、最新一个 completed execution episode 和 exact open protocol tail。`semanticCompact` 不再生成或渲染 Runtime 推断的 state cards。Coverage、source refs、archive refs 与 preserved-tail indexes 只保留在 `SemanticCompactBlock` 的诊断旁路中，不注入 continuation。rolling successor 遇到旧 block 时，会重新渲染其中的 LLM summary 并忽略 legacy state cards，而不是原样回放旧的 provider message。
+
+该机制主动用 prefix rewrite 换取模型注意力。Signed token savings、compact-call cost 与 cache miss 是诊断数据，不是 attention 模式的拒绝条件；source/head/protocol validation、非截断输出与完整 provider-visible projection budget 才是 hard acceptance gates。V2 block 记录 exact head identity、predecessor、new coverage 与 cumulative digest，但 recorder 仍是 best-effort：写入失败不会撤销 invocation-local accepted projection。因此它仍不是 V2 history checkpoint 那种“durable append 成功后才进入 replay”的同一协议。
 
 如果未来要把所有 LLM compaction 统一到“Events Log projection”模型，关键不是复用一个 summary prompt，而是让 active-loop source 也获得完整、稳定、可验证的 event coverage 与明确的 durability contract。这是架构方向，不应被描述成当前已经完成。
 

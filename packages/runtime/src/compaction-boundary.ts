@@ -20,6 +20,7 @@ export interface CompactionCoverage {
   toolCallIds?: readonly string[];
   contentKinds?: readonly string[];
   bodySha256?: readonly string[];
+  providerMessageSourceIds?: readonly string[];
 }
 
 export interface CompactionArchiveRef {
@@ -40,12 +41,15 @@ export interface CompactionBoundary {
   stage: CompactionStage;
   schemaVersion: number;
   boundaryId: string;
+  predecessorBoundaryId?: string;
+  cumulativeCoverageDigest?: string;
   sessionId: string;
   createdAt?: number;
   highWaterName?: string;
   highWaterSeq?: number;
   coverage: CompactionCoverage;
   preservedAnchor?: {
+    headProviderMessageSourceIds?: readonly string[];
     headRuntimeEventIds?: readonly string[];
     tailRuntimeEventIds?: readonly string[];
     tailProviderMessageSourceIds?: readonly string[];
@@ -71,6 +75,10 @@ export interface CompactionDecision {
   estimatedTokensBefore?: number;
   estimatedTokensAfter?: number;
   estimatedTokensSaved?: number;
+  candidateEstimatedTokens?: number;
+  preservedHeadEstimatedTokens?: number;
+  preservedTailEstimatedTokens?: number;
+  acceptedProjectionEstimatedTokens?: number;
   compactCallUsage?: {
     inputTokens?: number;
     outputTokens?: number;
@@ -175,6 +183,9 @@ export function compactionDecisionToDiagnostic(
       ? { coveredRuntimeEvents: decision.coverage.runtimeEventIds.length }
       : {}),
     ...(decision.coverage?.toolCallIds ? { coveredToolCalls: decision.coverage.toolCallIds.length } : {}),
+    ...(decision.coverage?.providerMessageSourceIds
+      ? { coveredProviderMessages: decision.coverage.providerMessageSourceIds.length }
+      : {}),
     ...(decision.coverage?.bodySha256 ? { coverageHashes: [...decision.coverage.bodySha256] } : {}),
     ...(decision.estimatedTokensBefore !== undefined
       ? { estimatedTokensBefore: decision.estimatedTokensBefore }
@@ -183,6 +194,18 @@ export function compactionDecisionToDiagnostic(
       ? { estimatedTokensAfter: decision.estimatedTokensAfter }
       : {}),
     ...(estimatedTokensSaved !== undefined ? { estimatedTokensSaved } : {}),
+    ...(decision.candidateEstimatedTokens !== undefined
+      ? { candidateEstimatedTokens: decision.candidateEstimatedTokens }
+      : {}),
+    ...(decision.preservedHeadEstimatedTokens !== undefined
+      ? { preservedHeadEstimatedTokens: decision.preservedHeadEstimatedTokens }
+      : {}),
+    ...(decision.preservedTailEstimatedTokens !== undefined
+      ? { preservedTailEstimatedTokens: decision.preservedTailEstimatedTokens }
+      : {}),
+    ...(decision.acceptedProjectionEstimatedTokens !== undefined
+      ? { acceptedProjectionEstimatedTokens: decision.acceptedProjectionEstimatedTokens }
+      : {}),
     ...(decision.compactCallUsage?.inputTokens !== undefined
       ? { compactCallInputTokens: decision.compactCallUsage.inputTokens }
       : {}),

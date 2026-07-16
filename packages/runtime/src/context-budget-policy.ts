@@ -262,35 +262,42 @@ function buildSemanticCompactPolicy(
   // Default off: require an explicit opt-in (the boolean flag or an explicit
   // non-off mode). Neither present means the experiment stays out of the budget.
   if (enabled !== true && mode === undefined) return undefined;
-  const rejectInvalidSummaries = parseOptionalBoolean(
-    env.MAKA_CONTEXT_SEMANTIC_COMPACT_REJECT_INVALID_SUMMARIES,
-    'MAKA_CONTEXT_SEMANTIC_COMPACT_REJECT_INVALID_SUMMARIES',
-  );
   const archiveRequired = parseOptionalBoolean(
     env.MAKA_CONTEXT_SEMANTIC_COMPACT_ARCHIVE_REQUIRED,
     'MAKA_CONTEXT_SEMANTIC_COMPACT_ARCHIVE_REQUIRED',
-  );
-  const benchmarkStateCards = parseOptionalBoolean(
-    env.MAKA_CONTEXT_SEMANTIC_COMPACT_BENCHMARK_STATE_CARDS,
-    'MAKA_CONTEXT_SEMANTIC_COMPACT_BENCHMARK_STATE_CARDS',
   );
   return {
     enabled: true,
     mode: mode ?? 'replace',
     minStepNumber: parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_STEP_NUMBER) ?? 2,
-    highWaterRatio: parseOptionalRatio(env.MAKA_CONTEXT_SEMANTIC_COMPACT_HIGH_WATER_RATIO) ?? 0.5,
+    // Attention compaction stays dormant through the first 256K estimated
+    // provider tokens. The completed-span thresholds below only apply after
+    // this high-water has been crossed.
+    highWaterRatio: parseOptionalRatio(env.MAKA_CONTEXT_SEMANTIC_COMPACT_HIGH_WATER_RATIO) ?? 1,
     forceRatio: parseOptionalRatio(env.MAKA_CONTEXT_SEMANTIC_COMPACT_FORCE_RATIO),
     targetRatio: parseOptionalRatio(env.MAKA_CONTEXT_SEMANTIC_COMPACT_TARGET_RATIO),
     maxActiveEstimatedTokens:
       parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MAX_ACTIVE_ESTIMATED_TOKENS) ??
       parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MAX_ESTIMATED_TOKENS) ??
-      16_384,
-    minRecentMessages: parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_RECENT_MESSAGES) ?? 4,
-    minRecentToolPairs: parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_RECENT_TOOL_PAIRS) ?? 1,
-    maxSummaryEstimatedTokens:
+      262_144,
+    ...(parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_RECENT_MESSAGES) !== undefined
+      ? { minRecentMessages: parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_RECENT_MESSAGES) }
+      : {}),
+    ...(parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_RECENT_TOOL_PAIRS) !== undefined
+      ? { minRecentToolPairs: parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_RECENT_TOOL_PAIRS) }
+      : {}),
+    minSafePrefixEstimatedTokens:
+      parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_SAFE_PREFIX_ESTIMATED_TOKENS) ?? 4_096,
+    minNewPrefixEstimatedTokens:
+      parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_NEW_PREFIX_ESTIMATED_TOKENS) ?? 4_096,
+    maxAcceptedProjectionEstimatedTokens:
+      parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MAX_ACCEPTED_PROJECTION_ESTIMATED_TOKENS) ??
       parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MAX_SUMMARY_ESTIMATED_TOKENS) ??
       parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_SUMMARY_MAX_ESTIMATED_TOKENS) ??
       768,
+    ...(parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MAX_SUMMARY_ESTIMATED_TOKENS) !== undefined
+      ? { maxSummaryEstimatedTokens: parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MAX_SUMMARY_ESTIMATED_TOKENS) }
+      : {}),
     minSavingsTokens: parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_SAVINGS_TOKENS) ?? 256,
     minSavingsRatio: parseOptionalRatio(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_SAVINGS_RATIO),
     minNetSavingsTokens: parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MIN_NET_SAVINGS_TOKENS) ?? 256,
@@ -302,10 +309,8 @@ function buildSemanticCompactPolicy(
       parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MAX_CONSECUTIVE_INVALID_SUMMARIES) ?? 2,
     invalidSummaryCooldownSteps:
       parseOptionalNonNegativeInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_INVALID_SUMMARY_COOLDOWN_STEPS) ?? 8,
-    ...(rejectInvalidSummaries !== undefined ? { rejectInvalidSummaries } : {}),
     timeoutMs: parseOptionalPositiveInt(env.MAKA_CONTEXT_SEMANTIC_COMPACT_TIMEOUT_MS),
     ...(archiveRequired !== undefined ? { archiveRequired } : {}),
-    ...(benchmarkStateCards !== undefined ? { benchmarkStateCards } : {}),
     ...(env.MAKA_CONTEXT_SEMANTIC_COMPACT_MODEL
       ? { summarizerModel: env.MAKA_CONTEXT_SEMANTIC_COMPACT_MODEL }
       : {}),

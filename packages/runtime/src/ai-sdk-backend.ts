@@ -110,13 +110,16 @@ import {
   type StreamTextResult,
 } from './model-adapter.js';
 import {
+  activeToolResultLineageIdentity,
   rewriteActiveToolResultsInMessages,
   type ActiveToolResultPruneDiagnosticPatch,
 } from './active-tool-result-prune.js';
 import { toolResultOutput } from './ai-sdk-tool-output.js';
 import {
+  buildActiveCompactionHeadAnchor,
   rewriteActiveFullCompactInMessages,
   type ActiveFullCompactBlock,
+  type ActiveCompactionHeadAnchor,
 } from './active-full-compact.js';
 import {
   rewriteSemanticCompactInMessages,
@@ -269,15 +272,57 @@ export function composePrepareStep(
   };
 }
 
+type ActiveCompactionPrepareStepResult = PrepareStepResultLike & {
+  makaSemanticCompactStatus?: 'replaced' | 'projected';
+};
+
+function composeActiveCompactionPrepareStep(
+  attention: PrepareStepFunctionLike | undefined,
+  capacity: PrepareStepFunctionLike | undefined,
+): PrepareStepFunctionLike | undefined {
+  if (!attention) return capacity;
+  if (!capacity) return attention;
+  return async (options) => {
+    const attentionResult = await Promise.resolve(attention(options)) as ActiveCompactionPrepareStepResult | undefined;
+    if (attentionResult?.makaSemanticCompactStatus === 'replaced') {
+      const { makaSemanticCompactStatus: _status, ...providerResult } = attentionResult;
+      return providerResult;
+    }
+    const capacityResult = await Promise.resolve(capacity({
+      ...options,
+      messages: attentionResult?.messages ?? options.messages,
+      ...(attentionResult?.activeTools ? { activeTools: attentionResult.activeTools } : {}),
+    }));
+    if (!capacityResult) {
+      if (!attentionResult) return undefined;
+      const { makaSemanticCompactStatus: _status, ...providerResult } = attentionResult;
+      return providerResult;
+    }
+    return {
+      ...attentionResult,
+      ...capacityResult,
+      activeTools: capacityResult.activeTools ?? attentionResult?.activeTools,
+      messages: capacityResult.messages ?? attentionResult?.messages,
+    };
+  };
+}
+
 function activeToolResultArchiveKey(
   candidate: ActiveToolResultArchiveCandidate & { bodySha256: string },
 ): string {
   return `active:${candidate.turnId}:${candidate.toolCallId}:${candidate.bodySha256}`;
 }
 
-function collectPrepareStepToolCallIds(steps: PrepareStepLike['steps']): Set<string> {
+/**
+ * Tool results from the newest completed step have not crossed the provider
+ * boundary yet: prepareStep is invoked immediately before the first request
+ * that could show those results to the model. Active pruning may archive only
+ * calls from older completed steps, after the model has had one request in
+ * which to consume their exact output.
+ */
+function collectPrunablePrepareStepToolCallIds(steps: PrepareStepLike['steps']): Set<string> {
   const out = new Set<string>();
-  for (const step of steps) {
+  for (const step of steps.slice(0, -1)) {
     for (const call of step.toolCalls ?? []) {
       if (typeof call.toolCallId === 'string' && call.toolCallId.length > 0) {
         out.add(call.toolCallId);
@@ -289,7 +334,9 @@ function collectPrepareStepToolCallIds(steps: PrepareStepLike['steps']): Set<str
 
 interface ActiveFullCompactPrepareStepProjection {
   sourceSignatures: readonly string[];
+  sourceSignatureMode: 'exact' | 'active_prune_lineage';
   projectedMessages: readonly ModelMessage[];
+  semanticBlock?: SemanticCompactBlock;
 }
 
 function projectAcceptedActiveFullCompactMessages(
@@ -297,9 +344,15 @@ function projectAcceptedActiveFullCompactMessages(
   acceptedProjection: ActiveFullCompactPrepareStepProjection | undefined,
 ): ModelMessage[] | undefined {
   if (!acceptedProjection) return undefined;
+  const sourceSignature = acceptedProjection.sourceSignatureMode === 'active_prune_lineage'
+    ? projectionSourceMessageSignature
+    : modelMessageSignature;
   if (incomingMessages.length < acceptedProjection.sourceSignatures.length) return undefined;
   for (let index = 0; index < acceptedProjection.sourceSignatures.length; index += 1) {
-    if (modelMessageSignature(incomingMessages[index]!) !== acceptedProjection.sourceSignatures[index]) {
+    if (
+      sourceSignature(incomingMessages[index]!)
+      !== acceptedProjection.sourceSignatures[index]
+    ) {
       return undefined;
     }
   }
@@ -1238,6 +1291,11 @@ export class AiSdkBackend implements AgentBackend {
             content: this.appendTurnTailPrompt(currentUserContent, turnTailPrompt),
           } as ModelMessage,
         ];
+        const activeCompactionHeadAnchor = buildActiveCompactionHeadAnchor(
+          messages,
+          messages.length - 1,
+          this.input.contextBudget?.charsPerToken,
+        );
         // Diagnostics describe the provider-visible (active) tool subset. A group
         // loaded *this* turn expands that subset on later steps (via prepareStep),
         // so the durable cost record is refined against the final active set once
@@ -1322,27 +1380,32 @@ export class AiSdkBackend implements AgentBackend {
           activeTools: activeToolsForStep ?? plan.activeTools,
           priorMessages: stepMessages,
         }, priorShapeBaseline).requestShapeHash;
-        const activeCompactHook = this.buildSemanticCompactPrepareStep(
-          turnId,
-          model,
-          input.runtimeContext,
-          (messagesForStep, activeToolsForStep) => stepRequestShapeHash(messagesForStep, activeToolsForStep),
-          (patch) => {
-            activeCompactDiagnosticPatch = mergeContextBudgetDiagnosticPatches(
-              activeCompactDiagnosticPatch,
-              patch,
-            );
-          },
-        ) ?? this.buildActiveFullCompactPrepareStep(
-          turnId,
-          input.runtimeContext,
-          (messagesForStep, activeToolsForStep) => stepRequestShapeHash(messagesForStep, activeToolsForStep),
-          (patch) => {
-            activeCompactDiagnosticPatch = mergeContextBudgetDiagnosticPatches(
-              activeCompactDiagnosticPatch,
-              patch,
-            );
-          },
+        const activeCompactHook = composeActiveCompactionPrepareStep(
+          this.buildSemanticCompactPrepareStep(
+            turnId,
+            model,
+            input.runtimeContext,
+            activeCompactionHeadAnchor,
+            (messagesForStep, activeToolsForStep) => stepRequestShapeHash(messagesForStep, activeToolsForStep),
+            (patch) => {
+              activeCompactDiagnosticPatch = mergeContextBudgetDiagnosticPatches(
+                activeCompactDiagnosticPatch,
+                patch,
+              );
+            },
+          ),
+          this.buildActiveFullCompactPrepareStep(
+            turnId,
+            input.runtimeContext,
+            activeCompactionHeadAnchor,
+            (messagesForStep, activeToolsForStep) => stepRequestShapeHash(messagesForStep, activeToolsForStep),
+            (patch) => {
+              activeCompactDiagnosticPatch = mergeContextBudgetDiagnosticPatches(
+                activeCompactDiagnosticPatch,
+                patch,
+              );
+            },
+          ),
         );
         // Deterministic priority on a capacity-replaced step: the hard window
         // invariant owns the projection, so semantic/active-full compaction
@@ -2352,7 +2415,7 @@ export class AiSdkBackend implements AgentBackend {
 
     const archivedPlaceholders = new Map<string, ActiveArchivedToolResultPlaceholder>();
     return async (options) => {
-      const eligibleToolCallIds = collectPrepareStepToolCallIds(options.steps);
+      const eligibleToolCallIds = collectPrunablePrepareStepToolCallIds(options.steps);
       if (eligibleToolCallIds.size === 0) return undefined;
       const rewritten = await rewriteActiveToolResultsInMessages({
         messages: options.messages,
@@ -2381,6 +2444,7 @@ export class AiSdkBackend implements AgentBackend {
     turnId: string,
     model: unknown,
     runtimeEvents: readonly RuntimeEvent[] | undefined,
+    headAnchor: ActiveCompactionHeadAnchor,
     requestShapeHashForMessages: (
       messages: readonly ModelMessage[],
       activeToolsForStep: readonly string[] | undefined,
@@ -2425,6 +2489,10 @@ export class AiSdkBackend implements AgentBackend {
         now: this.now(),
         charsPerToken: this.input.contextBudget?.charsPerToken,
         requestShapeHashForMessages: (messages) => requestShapeHashForMessages(messages, activeToolsForStep),
+        headAnchor,
+        ...(acceptedProjection?.semanticBlock
+          ? { predecessorBlock: acceptedProjection.semanticBlock }
+          : {}),
         abortSignal: this.abortController?.signal,
         summarizer: async (request) => {
           const startedAt = this.now();
@@ -2470,18 +2538,29 @@ export class AiSdkBackend implements AgentBackend {
       if (!dryRun && rewritten.decision === 'replaced') {
         if (rewritten.block) this.recordSemanticCompactBlock(rewritten.block);
         acceptedProjection = {
-          sourceSignatures: incomingMessages.map(modelMessageSignature),
+          sourceSignatures: incomingMessages.map(projectionSourceMessageSignature),
+          sourceSignatureMode: 'active_prune_lineage',
           projectedMessages: rewritten.messages,
+          ...(rewritten.block ? { semanticBlock: rewritten.block } : {}),
         };
-        return { messages: rewritten.messages };
+        return {
+          messages: rewritten.messages,
+          makaSemanticCompactStatus: 'replaced',
+        } as ActiveCompactionPrepareStepResult;
       }
-      return !dryRun && projectedMessages ? { messages: projectedMessages } : undefined;
+      return !dryRun && projectedMessages
+        ? {
+            messages: projectedMessages,
+            makaSemanticCompactStatus: 'projected',
+          } as ActiveCompactionPrepareStepResult
+        : undefined;
     };
   }
 
   private buildActiveFullCompactPrepareStep(
     turnId: string,
     runtimeEvents: readonly RuntimeEvent[] | undefined,
+    headAnchor: ActiveCompactionHeadAnchor,
     requestShapeHashForMessages: (
       messages: readonly ModelMessage[],
       activeToolsForStep: readonly string[] | undefined,
@@ -2510,6 +2589,7 @@ export class AiSdkBackend implements AgentBackend {
         now: this.now(),
         charsPerToken: this.input.contextBudget?.charsPerToken,
         requestShapeHashForMessages: (messages) => requestShapeHashForMessages(messages, activeToolsForStep),
+        headAnchor,
         dryRun,
         ...(dryRun ? { dryRunReason: policy.mode } : {}),
       });
@@ -2518,6 +2598,7 @@ export class AiSdkBackend implements AgentBackend {
         if (rewritten.block) this.recordActiveFullCompactBlock(rewritten.block);
         acceptedProjection = {
           sourceSignatures: incomingMessages.map(modelMessageSignature),
+          sourceSignatureMode: 'exact',
           projectedMessages: rewritten.messages,
         };
         return { messages: rewritten.messages };
@@ -2720,6 +2801,7 @@ export class AiSdkBackend implements AgentBackend {
       }
       acceptedProjection = {
         sourceSignatures: incomingMessages.map(modelMessageSignature),
+        sourceSignatureMode: 'exact',
         projectedMessages: outcome.replacementMessages,
       };
       state.replacedStepNumber = options.stepNumber;
@@ -4103,6 +4185,29 @@ function sha256(text: string): string {
 
 function modelMessageSignature(message: ModelMessage): string {
   return sha256(stableStringifyForSignature(message));
+}
+
+/**
+ * A projection source signature must survive representation-only active
+ * pruning. Preserve every message field except a tool-result payload, whose
+ * raw body and archive placeholder are normalized to the same stable lineage
+ * identity (tool call + original body hash). Any other source mutation still
+ * invalidates the accepted projection.
+ */
+function projectionSourceMessageSignature(message: ModelMessage): string {
+  if (message.role !== 'tool' || !Array.isArray(message.content)) {
+    return modelMessageSignature(message);
+  }
+  const normalizedContent = (message.content as unknown[]).map((part) => {
+    const lineage = activeToolResultLineageIdentity(part);
+    if (!lineage || !part || typeof part !== 'object') return part;
+    const { output: _output, result: _result, ...metadata } = part as Record<string, unknown>;
+    return {
+      ...metadata,
+      makaProjectionToolResultLineage: lineage,
+    };
+  });
+  return modelMessageSignature({ ...message, content: normalizedContent } as ModelMessage);
 }
 
 function stableStringifyForSignature(value: unknown): string {
