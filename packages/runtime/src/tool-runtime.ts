@@ -1647,24 +1647,27 @@ export function classifyError(error: unknown): string {
   return error instanceof Error ? (error.name || 'Other') : 'Other';
 }
 
-export function errorReasonFromClass(errorClass: string): string | undefined {
+export function errorPresentationFromClass(errorClass: string): {
+  reason?: string;
+  message?: string;
+} {
   switch (errorClass) {
     case 'ContextLength':
-      return 'context_overflow';
+      return { reason: 'context_overflow', message: 'Context window exceeded' };
     case 'Timeout':
-      return 'timeout';
+      return { reason: 'timeout', message: 'Request timed out' };
     case 'Auth':
-      return 'auth';
+      return { reason: 'auth', message: 'Authentication failed' };
     case 'ProviderBilling':
-      return 'provider_billing';
+      return { reason: 'provider_billing', message: 'Provider billing required' };
     case 'ProviderUnavailable':
-      return 'provider_unavailable';
+      return { reason: 'provider_unavailable', message: 'Provider returned an error' };
     case 'RateLimit':
-      return 'rate_limit';
+      return { reason: 'rate_limit', message: 'Rate limit exceeded' };
     case 'Network':
-      return 'network';
+      return { reason: 'network', message: 'Network error' };
     default:
-      return undefined;
+      return {};
   }
 }
 

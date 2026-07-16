@@ -214,6 +214,41 @@ describe('ModelAdapter stream and error normalization', () => {
     assert.equal(adapter.mapFinishReason('provider-new-reason'), 'end_turn');
   });
 
+  test('projects a structured network error to a consistent reason and safe message', () => {
+    const event = newAdapter().makeErrorEvent('turn-1', {
+      message: 'fetch failed',
+      detail: 'token=sk-live-secret-token-value',
+    });
+
+    assert.equal(event.reason, 'network');
+    assert.equal(event.message, 'Network error');
+    assert.equal(JSON.stringify(event).includes('sk-live-secret-token-value'), false);
+  });
+
+  test('retains Node connection copy without promoting retry classification', () => {
+    const adapter = newAdapter();
+    const error = new Error('connect ECONNREFUSED 127.0.0.1:443');
+    const event = adapter.makeErrorEvent('turn-1', error);
+
+    assert.equal(adapter.classifyError(error), 'Error');
+    assert.equal(event.reason, undefined);
+    assert.equal(event.message, 'Network error');
+  });
+
+  test('projects string provider errors through the same classification', () => {
+    const event = newAdapter().makeErrorEvent('turn-1', 'fetch failed');
+
+    assert.equal(event.reason, 'network');
+    assert.equal(event.message, 'Network error');
+  });
+
+  test('keeps an unknown structured provider error generic', () => {
+    const event = newAdapter().makeErrorEvent('turn-1', { message: 'provider exploded' });
+
+    assert.equal(event.reason, undefined);
+    assert.equal(event.message, 'Operation failed');
+  });
+
   test('classifies provider context-length overflow errors as ContextLength', () => {
     const adapter = newAdapter();
     const overflow = (message: string, extra: Record<string, unknown> = {}) =>
