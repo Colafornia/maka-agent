@@ -4,12 +4,14 @@ import { readFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describeChatConfigurationReason, parseNoRealConnectionError } from '@maka/core';
-import { resolveSelectedModelContextWindow } from '@maka/runtime';
-import { createMakaSessionDriver } from './session-driver.js';
+import { fetchProviderModels, resolveSelectedModelContextWindow, SessionActivityRegistry } from '@maka/runtime';
+import { createConnectionStore, createFileCredentialStore } from '@maka/storage';
+import { createMakaSessionDriver, type MakaSessionDriver } from './session-driver.js';
 import { createMakaCliRuntimeContext } from './runtime-bootstrap.js';
 import { selectableModelIdsForTarget } from './connection-target.js';
 import { resolveMakaWorkspaceRoot } from './workspace-root.js';
-import { runMakaPiTui } from './pi-tui-runner.js';
+import { runMakaPiTui, type MakaPiTuiGoalLifecycle } from './pi-tui-runner.js';
+import { createApiKeyOnboardingSurface } from './onboarding.js';
 
 export type MakaCliCommand =
   | { kind: 'tui' }
@@ -122,14 +124,36 @@ export async function runMakaCli(argv: string[] = process.argv.slice(2)): Promis
           cwd: process.cwd(),
         });
       } catch (error) {
-        // A missing / misconfigured connection is the first thing a new user
-        // hits. Translate the raw `NO_REAL_CONNECTION:<reason>` throw into
-        // actionable guidance; let anything else propagate to the top-level
-        // handler unchanged.
-        const guidance = formatStartupConnectionError(error, workspaceRoot);
-        if (guidance === null) throw error;
-        process.stderr.write(`${guidance}\n`);
-        return 1;
+        const { matched, reason } = parseNoRealConnectionError(error);
+        const isFirstRun = matched && reason === 'missing_default_connection';
+        if (!isFirstRun) {
+          const guidance = formatStartupConnectionError(error, workspaceRoot);
+          if (guidance === null) throw error;
+          process.stderr.write(`${guidance}\n`);
+          return 1;
+        }
+        // Fresh install with no connection: run the in-TUI onboarding wizard
+        // before giving up, then retry context creation with the new connection.
+        const configured = await runFirstRunOnboarding(workspaceRoot);
+        if (!configured) {
+          process.stderr.write(`${formatStartupConnectionError(error, workspaceRoot)}\n`);
+          return 1;
+        }
+        try {
+          context = await createMakaCliRuntimeContext({
+            surface: 'tui',
+            workspaceRoot,
+            cwd: process.cwd(),
+          });
+        } catch (retryError) {
+          // A failure after onboarding (e.g. the saved connection still isn't
+          // ready) gets the same classified guidance as the first attempt,
+          // not a raw stack propagated to the top-level handler.
+          const guidance = formatStartupConnectionError(retryError, workspaceRoot);
+          if (guidance === null) throw retryError;
+          process.stderr.write(`${guidance}\n`);
+          return 1;
+        }
       }
       try {
         const driver = createMakaSessionDriver({
@@ -154,6 +178,7 @@ export async function runMakaCli(argv: string[] = process.argv.slice(2)): Promis
           listShellRunUpdates: context.listShellRunUpdates,
           skills: context.skills,
           goalLifecycle: context.goalContinuation,
+          onboarding: context.onboarding,
           onProcessExit: handleMakaCliProcessExit,
         });
         return 0;
@@ -187,6 +212,57 @@ export function formatStartupConnectionError(error: unknown, workspaceRoot: stri
     '添加并启用一个模型连接（含 API key），然后重新运行 maka。',
     `连接与凭据存储于：${workspaceRoot}`,
   ].join('\n');
+}
+
+/** Run the first-run onboarding wizard when no connection exists yet. Returns
+ *  true if the user configured a connection, false if they cancelled. The host
+ *  owns the stores; the wizard only collects provider + key (see MakaOnboardingSurface). */
+async function runFirstRunOnboarding(workspaceRoot: string): Promise<boolean> {
+  const connectionStore = createConnectionStore(workspaceRoot);
+  const credentialStore = createFileCredentialStore(workspaceRoot);
+  await runMakaPiTui({
+    driver: createFirstRunSessionDriver(),
+    title: 'Maka',
+    cwd: process.cwd(),
+    model: '',
+    connectionSlug: '',
+    permissionMode: 'ask',
+    firstRun: true,
+    goalLifecycle: {
+      activities: new SessionActivityRegistry(),
+      beginExternalTurn: () => ({ kind: 'registered', settle: async () => {} }),
+      bindHost: () => () => {},
+    } satisfies MakaPiTuiGoalLifecycle,
+    onboarding: createApiKeyOnboardingSurface({ connectionStore, credentialStore, fetchModels: fetchProviderModels }),
+  });
+  // Configured iff a connection was actually persisted during the wizard — the
+  // wizard only closes after a verified key (or on cancel; see runner firstRun).
+  return (await connectionStore.getDefault()) !== null;
+}
+
+/** A minimal session driver for the first-run wizard. The wizard never runs an
+ *  agent turn (the editor only collects the API key via the onboarding
+ *  intercept), so runtime/chat methods are unreachable stubs. */
+function createFirstRunSessionDriver(): MakaSessionDriver {
+  const notReady = async (): Promise<never> => {
+    throw new Error('first-run onboarding: no agent turn before a connection exists');
+  };
+  return {
+    getSessionId: () => null,
+    listSessions: async () => [],
+    preparePrompt: notReady,
+    compactSession: async function* () {},
+    respondToPermission: async () => {},
+    setModel: async () => {},
+    setThinkingLevel: async () => {},
+    setPermissionMode: async () => {},
+    renameSession: async () => {},
+    switchSession: notReady,
+    listRewindTargets: async () => [],
+    rewindToTurn: notReady,
+    startNewSession: () => {},
+    stop: async () => {},
+  };
 }
 
 async function readPackageVersion(): Promise<string> {

@@ -15,7 +15,7 @@ import {
 } from '@earendil-works/pi-tui';
 import { PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@maka/core/permission';
 import { isThinkingLevel, thinkingVariantsForModel, type ThinkingLevel } from '@maka/core/model-thinking';
-import type { ProviderType } from '@maka/core/llm-connections';
+import { PROVIDER_DEFAULTS, type ProviderType } from '@maka/core/llm-connections';
 import {
   ShellRunUpdateBuffer,
   mergeShellRunUpdate,
@@ -24,6 +24,7 @@ import {
 } from '@maka/core';
 import type { GoalTurnOutcome, SessionActivityLease } from '@maka/runtime';
 import type { ModelChoice } from './connection-target.js';
+import { listApiKeyOnboardableProviders, type MakaOnboardingSurface } from './onboarding.js';
 import type { MakaCliSkillSurface } from './runtime-bootstrap.js';
 import {
   composeSkillInvocationMessage,
@@ -82,6 +83,7 @@ import {
   MakaAutocompleteProvider,
   PickerOverlay,
   UserQuestionOverlay,
+  onboardableProviderPickerItems,
   modelChoicePickerItems,
   modelPickerItems,
   permissionModePickerItems,
@@ -132,6 +134,12 @@ export interface MakaPiTuiInput {
   skills?: MakaCliSkillSurface;
   /** Mandatory turn ownership shared with CLI Automation and Goal continuation. */
   goalLifecycle: MakaPiTuiGoalLifecycle;
+  /** API-key onboarding surface (#1098). When present, /setup runs the wizard
+   *  and calls setup() with the chosen provider + key; the host owns the stores. */
+  onboarding?: MakaOnboardingSurface;
+  /** First-run mode: auto-open the onboarding wizard on launch instead of
+   *  waiting for /setup (used when the CLI starts with no configured connection). */
+  firstRun?: boolean;
 }
 
 export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
@@ -783,7 +791,73 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     requestRender();
   };
 
+  let pendingKeyEntry: { providerType: ProviderType } | undefined;
+
   editor.onSubmit = (prompt) => {
+    if (pendingKeyEntry) {
+      const entry = pendingKeyEntry;
+      // A slash command while the key prompt is armed is routed as a command,
+      // not swallowed as an API key (e.g. /exit must still work).
+      if (prompt.startsWith('/')) {
+        pendingKeyEntry = undefined;
+        handleSlashCommand(prompt);
+        return;
+      }
+      pendingKeyEntry = undefined;
+      if (!input.onboarding) {
+        // Minimal host without an onboarding surface cannot collect a key.
+        state.entries.push({
+          kind: 'notice',
+          level: 'error',
+          text: 'Onboarding 不可用：当前运行环境未提供配置入口。',
+        });
+        requestRender();
+        return;
+      }
+      const providerLabel = PROVIDER_DEFAULTS[entry.providerType]?.label ?? entry.providerType;
+      void input.onboarding.setup({ providerType: entry.providerType, apiKey: prompt }).then(
+        (result) => {
+          if (result.testError) {
+            // Saved but the probe failed (wrong key / offline). Re-arm the key
+            // prompt so the user retries in place — the upsert rotates the key.
+            state.entries.push({
+              kind: 'notice',
+              level: 'error',
+              text: `API key 验证失败：${result.testError}。请检查后重新输入。`,
+            });
+            pendingKeyEntry = entry;
+            requestRender();
+            return;
+          }
+          if (input.firstRun) {
+            beginClose();
+            return;
+          }
+          state.entries.push({
+            kind: 'notice',
+            level: 'info',
+            text: `已配置 ${providerLabel}。新连接将在下次启动 maka 时生效。`,
+          });
+          requestRender();
+        },
+        (error) => {
+          pendingKeyEntry = entry;
+          state.entries.push({
+            kind: 'notice',
+            level: 'error',
+            text: `配置失败：${error instanceof Error ? error.message : String(error)}`,
+          });
+          requestRender();
+        },
+      );
+      return;
+    }
+    if (input.firstRun) {
+      // First-run mode: no agent turn is possible before a connection exists.
+      // Re-open the picker so the only exits are configure or cancel (Esc).
+      showSetupPicker();
+      return;
+    }
     if (turnRunning) {
       steerRunningTurn(prompt);
       return;
@@ -1141,7 +1215,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     rightLabel: string,
     items: SelectItem[],
     onSelect: (item: SelectItem) => void,
-    options: { minPrimaryColumnWidth: number; maxPrimaryColumnWidth: number; selectedIndex?: number; hint?: string },
+    options: { minPrimaryColumnWidth: number; maxPrimaryColumnWidth: number; selectedIndex?: number; hint?: string; onCancel?: () => void },
   ): void => {
     const list = new SelectList(items, 10, selectListTheme(), {
       minPrimaryColumnWidth: options.minPrimaryColumnWidth,
@@ -1156,8 +1230,39 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     };
     list.onCancel = () => {
       overlay?.hide();
+      options.onCancel?.();
     };
     overlay = showBottomPicker(picker);
+  };
+
+  const showSetupPicker = () => {
+    const providers = listApiKeyOnboardableProviders();
+    if (providers.length === 0) {
+      state.entries.push({
+        kind: 'notice',
+        level: 'info',
+        text: '没有可配置的 API key 类供应商。',
+      });
+      requestRender();
+      return;
+    }
+    showSelectPicker(
+      'Set Up Provider',
+      String(providers.length),
+      onboardableProviderPickerItems(providers),
+      (item) => {
+        const providerType = item.value as ProviderType;
+        const label = PROVIDER_DEFAULTS[providerType]?.label ?? providerType;
+        pendingKeyEntry = { providerType };
+        state.entries.push({
+          kind: 'notice',
+          level: 'info',
+          text: `请输入 ${label} 的 API key，按回车提交（仅本机存储）。`,
+        });
+        requestRender();
+      },
+      { minPrimaryColumnWidth: 16, maxPrimaryColumnWidth: 32, onCancel: input.firstRun ? () => beginClose() : undefined },
+    );
   };
 
   const compactSession = async () => {
@@ -1453,6 +1558,22 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           return;
         }
         void showSkillList();
+      },
+    },
+    {
+      name: 'setup',
+      description: 'Set up a model provider (API key)',
+      run: (parts: string[]) => {
+        if (parts.length !== 1) {
+          state.entries.push({
+            kind: 'notice',
+            level: 'error',
+            text: 'Usage: /setup',
+          });
+          requestRender();
+          return;
+        }
+        showSetupPicker();
       },
     },
     {
@@ -1793,6 +1914,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     // to the enable sequence (a focus-in `\x1b[I`) is echoed by the cooked-mode
     // line discipline and leaks onto the screen as a stray `^[[I` on launch.
     terminal.write(ENABLE_FOCUS_REPORTING);
+    if (input.firstRun) showSetupPicker();
   } catch (error) {
     beginClose(error instanceof Error ? error : new Error(String(error)));
   }
