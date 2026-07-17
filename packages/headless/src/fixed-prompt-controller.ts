@@ -7,6 +7,7 @@ import {
   type HarborCellContextBudgetPolicySnapshot,
   type HarborCellContextBudgetSummary,
   type HarborCellContinuationSummary,
+  type HarborCellDeadlineSettlement,
   type HarborCellExecutionIdentity,
   type HarborCellOutput,
   type HarborCellTaskToolSummary,
@@ -15,6 +16,7 @@ import {
 import type { Config } from './contracts.js';
 import { syncParentDirectory } from './immutable-file.js';
 import type { MakaChangeAuditRecord } from './change-audit.js';
+import type { HarborBillingMode } from './harbor-task-runner.js';
 import { assertFinitePositive, assertPositiveInt, assertRatio } from './numeric-guards.js';
 
 export const FIXED_PROMPT_WAL_SCHEMA_VERSION = 1;
@@ -115,6 +117,7 @@ export interface FixedPromptTaskCompletedEvent {
   errorClass?: string;
   promptHash?: string;
   executionIdentity?: HarborCellExecutionIdentity;
+  deadlineSettlement?: HarborCellDeadlineSettlement;
   tokenSummary?: HarborCellTokenSummary;
   contextBudgetPolicy?: HarborCellContextBudgetPolicySnapshot;
   contextBudgetSummary?: HarborCellContextBudgetSummary;
@@ -340,6 +343,7 @@ export interface RunFixedPromptControllerInput {
   resumeFingerprint?: string;
   requireExecutionIdentity?: boolean;
   expectedPricingProfile?: string;
+  billingMode?: HarborBillingMode;
   /** Refuse resume when a model attempt was durably admitted but no terminal
    * event exists, preserving single-sample benchmark semantics. */
   protectPassAtOne?: boolean;
@@ -460,6 +464,7 @@ export async function runFixedPromptController(
         expectedPromptHash,
         requireExecutionIdentity: input.requireExecutionIdentity,
         expectedPricingProfile: input.expectedPricingProfile,
+        billingMode: input.billingMode,
         resumeFingerprint: input.resumeFingerprint,
         id: newId(),
         ts: now(),
@@ -617,6 +622,7 @@ async function runTaskAndBuildEvent(input: {
   expectedPromptHash: string;
   requireExecutionIdentity?: boolean;
   expectedPricingProfile?: string;
+  billingMode?: HarborBillingMode;
   resumeFingerprint?: string;
   id: string;
   ts: number;
@@ -662,6 +668,7 @@ async function runTaskAndBuildEvent(input: {
         expectedConfig: input.config,
         requireExecutionIdentity: input.requireExecutionIdentity,
         expectedPricingProfile: input.expectedPricingProfile,
+        billingMode: input.billingMode,
         resumeFingerprint: input.resumeFingerprint,
         id: input.id,
         ts: input.ts,
@@ -699,6 +706,7 @@ async function runTaskAndBuildEvent(input: {
           expectedConfig: input.config,
           requireExecutionIdentity: input.requireExecutionIdentity,
           expectedPricingProfile: input.expectedPricingProfile,
+          billingMode: input.billingMode,
           resumeFingerprint: input.resumeFingerprint,
           id: input.id,
           ts: input.ts,
@@ -721,6 +729,7 @@ async function runTaskAndBuildEvent(input: {
     expectedPromptHash: input.expectedPromptHash,
     requireExecutionIdentity: input.requireExecutionIdentity,
     expectedPricingProfile: input.expectedPricingProfile,
+    billingMode: input.billingMode,
     resumeFingerprint: input.resumeFingerprint,
     taskId: input.task.id,
     runId: input.input.runId,
@@ -736,6 +745,7 @@ function taskEventFromOutput(input: {
   expectedPromptHash: string;
   requireExecutionIdentity?: boolean;
   expectedPricingProfile?: string;
+  billingMode?: HarborBillingMode;
   resumeFingerprint?: string;
   taskId: string;
   runId: string;
@@ -769,6 +779,7 @@ function taskEventFromOutput(input: {
     input.expectedConfig,
     input.requireExecutionIdentity ?? false,
     input.expectedPricingProfile,
+    input.billingMode,
   );
   if (plumbingFailure) {
     return taskPlumbingFailedEvent({
@@ -790,9 +801,11 @@ function taskCompletedEvent(input: {
   ts: number;
 }): FixedPromptTaskCompletedEvent {
   const { output } = input;
-  const passed = output.cell.status === 'completed' && output.harbor.reward > 0;
+  const deadlineSettled = output.cell.deadlineSettlement?.source === 'benchmark.deadline';
+  const verifierGraded = output.cell.status === 'completed' || deadlineSettled;
+  const passed = verifierGraded && output.harbor.reward > 0;
   const errorClass = output.cell.errorClass ?? (passed ? undefined : 'verification_failed');
-  const scored = output.cell.status === 'completed' && !isUnscoredCellFailure(errorClass);
+  const scored = verifierGraded && !isUnscoredCellFailure(errorClass);
   const agentFailure = output.cell.status === 'failed' && errorClass === 'tool_step_cap_reached';
   return {
     schemaVersion: FIXED_PROMPT_WAL_SCHEMA_VERSION,
@@ -810,6 +823,7 @@ function taskCompletedEvent(input: {
     ...(errorClass ? { errorClass } : {}),
     ...(output.cell.promptHash ? { promptHash: output.cell.promptHash } : {}),
     ...(output.cell.executionIdentity ? { executionIdentity: output.cell.executionIdentity } : {}),
+    ...(output.cell.deadlineSettlement ? { deadlineSettlement: output.cell.deadlineSettlement } : {}),
     ...(output.cell.tokenSummary ? { tokenSummary: output.cell.tokenSummary } : {}),
     ...(output.cell.contextBudgetPolicy ? { contextBudgetPolicy: output.cell.contextBudgetPolicy } : {}),
     ...(output.cell.contextBudgetSummary ? { contextBudgetSummary: output.cell.contextBudgetSummary } : {}),
@@ -883,7 +897,14 @@ function taskPlumbingFailedEvent(input: {
   };
 }
 
-function classifyPlumbingFailure(output: HarborTaskRunOutput, expectedPromptHash: string, expectedConfig: Config, requireExecutionIdentity: boolean, expectedPricingProfile: string | undefined): {
+function classifyPlumbingFailure(
+  output: HarborTaskRunOutput,
+  expectedPromptHash: string,
+  expectedConfig: Config,
+  requireExecutionIdentity: boolean,
+  expectedPricingProfile: string | undefined,
+  billingMode: HarborBillingMode | undefined,
+): {
   errorClass: FixedPromptTaskPlumbingFailedEvent['errorClass'];
   error: string;
 } | undefined {
@@ -907,7 +928,7 @@ function classifyPlumbingFailure(output: HarborTaskRunOutput, expectedPromptHash
       error: `Harbor cell prompt hash ${output.cell.promptHash} did not match ${expectedPromptHash}`,
     };
   }
-  if (output.cell.tokenSummary && output.cell.tokenSummary.total > 0 && output.cell.tokenSummary.costUsd === 0) {
+  if (billingMode !== 'account-plan' && output.cell.tokenSummary && output.cell.tokenSummary.total > 0 && output.cell.tokenSummary.costUsd === 0) {
     return {
       errorClass: 'zero_cost_with_tokens',
       error: 'Harbor cell reported token usage but zero costUsd',
@@ -1003,6 +1024,7 @@ function taskBudgetExhaustedEvent(input: {
   expectedConfig: Config;
   requireExecutionIdentity?: boolean;
   expectedPricingProfile?: string;
+  billingMode?: HarborBillingMode;
   resumeFingerprint?: string;
   id: string;
   ts: number;
@@ -1036,6 +1058,7 @@ function taskBudgetExhaustedEvent(input: {
             input.expectedConfig,
             input.requireExecutionIdentity ?? false,
             input.expectedPricingProfile,
+            input.billingMode,
           ));
   } else {
     evidenceFailure = classifyExecutionIdentityFailure(
