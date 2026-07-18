@@ -77,6 +77,7 @@ interface FakeOptions {
   verifierStdout?: string;
   verifierOutcome?: Record<string, unknown> | null;
   trialResult?: Record<string, unknown>;
+  makaTrace?: boolean;
   captured?: { config?: Record<string, unknown>; request?: HarborRunRequest };
 }
 
@@ -142,8 +143,10 @@ function fakeRunner(opts: FakeOptions): HarborProcessRunner {
       await writeFile(join(trialDir, 'result.json'), JSON.stringify(opts.trialResult), 'utf8');
     }
     await writeFile(join(trialDir, 'agent', 'runtime-events.jsonl'), opts.events ?? '{"type":"x"}\n', 'utf8');
-    await mkdir(join(trialDir, 'agent', 'maka-storage', 'sessions', 'sess', 'runs', 'run'), { recursive: true });
-    await writeFile(join(trialDir, 'agent', 'maka-storage', 'sessions', 'sess', 'runs', 'run', 'events.jsonl'), '{"type":"tool_failed"}\n', 'utf8');
+    if (opts.makaTrace !== false) {
+      await mkdir(join(trialDir, 'agent', 'maka-storage', 'sessions', 'sess', 'runs', 'run'), { recursive: true });
+      await writeFile(join(trialDir, 'agent', 'maka-storage', 'sessions', 'sess', 'runs', 'run', 'events.jsonl'), '{"type":"tool_failed"}\n', 'utf8');
+    }
     return {
       exitCode: opts.exitCodeAfterArtifacts ?? 0,
       stdout: opts.exitCodeAfterArtifacts ? '' : 'ok',
@@ -472,7 +475,7 @@ describe('createHarborTaskRunner', () => {
         upstreamAuthorization = request.headers.authorization ?? '';
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end([
-          'data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":25,"prompt_tokens_details":{"cached_tokens":20}}}',
+          'data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":25,"prompt_tokens_details":{"cached_tokens":20},"completion_tokens_details":{"reasoning_tokens":15}}}',
           '',
           'data: [DONE]',
           '',
@@ -523,14 +526,45 @@ describe('createHarborTaskRunner', () => {
           cacheMissInput: 80,
           cacheWriteInput: 0,
           cacheMissInputSource: 'explicit',
-          reasoning: 0,
+          reasoning: 15,
           total: 125,
           costUsd: 0,
           pricingSource: 'runtime',
         });
+        assert.ok(output.cell.providerTelemetryPath);
+        const telemetry = JSON.parse(await readFile(output.cell.providerTelemetryPath, 'utf8')) as {
+          schemaVersion: number;
+          summary: { requests: number; completed: number; reasoningTokens: number | null };
+          requests: Array<{ outcome: string; terminalEvent: boolean }>;
+        };
+        assert.equal(telemetry.schemaVersion, 1);
+        assert.equal(telemetry.summary.requests, 1);
+        assert.equal(telemetry.summary.completed, 1);
+        assert.equal(telemetry.summary.reasoningTokens, 15);
+        assert.equal(telemetry.requests[0]?.outcome, 'completed');
+        assert.equal(telemetry.requests[0]?.terminalEvent, true);
       } finally {
         await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
       }
+    });
+  });
+
+  test('uses the external agent runtime stream as its readable trace evidence', async () => {
+    await withRun(async ({ jobsDir, repo }) => {
+      const runner = createHarborTaskRunner({
+        makaRepoPath: repo,
+        jobsDir,
+        agent: 'kimi-code',
+        kimiCodeToolchainPath: '/toolchain',
+        agentVersion: '0.26.0',
+        model: 'kimi-coding-plan/k3',
+        provider: 'ollama',
+        runHarbor: fakeRunner({ reward: '1\n', makaTrace: false }),
+      });
+
+      const output = await runner(runInput());
+      assert.equal(output.cell.traceEventsPath, output.cell.runtimeEventsPath);
+      assert.equal(await readFile(output.cell.traceEventsPath, 'utf8'), '{"type":"x"}\n');
     });
   });
 
@@ -766,6 +800,60 @@ describe('createHarborTaskRunner', () => {
         runHarbor: fakeRunner({ exitCode: 1 }),
       });
       await assert.rejects(runner(runInput()), HarborInfraError);
+    });
+  });
+
+  test('keeps provider telemetry evidence when Harbor exits non-zero', async () => {
+    await withRun(async ({ jobsDir, repo, keyFile }) => {
+      const upstream = createServer((_request, response) => {
+        response.writeHead(429, { 'content-type': 'application/json' });
+        response.end('{"error":"rate_limited"}');
+      });
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+      const address = upstream.address();
+      assert.ok(address && typeof address !== 'string');
+      try {
+        const runner = createHarborTaskRunner({
+          makaRepoPath: repo,
+          jobsDir,
+          agent: 'kimi-code',
+          kimiCodeToolchainPath: '/toolchain',
+          agentVersion: '0.26.0',
+          model: 'kimi-coding-plan/k3',
+          provider: 'kimi-coding-plan',
+          apiKeyFile: keyFile,
+          agentEnv: { MAKA_BASE_URL: `http://127.0.0.1:${address.port}/coding/v1` },
+          runHarbor: async (request) => {
+            const proxyUrl = request.env?.MAKA_PROVIDER_PROXY_URL
+              ?.replace('host.docker.internal', '127.0.0.1');
+            const proxyToken = request.env?.MAKA_PROVIDER_PROXY_TOKEN;
+            assert.ok(proxyUrl && proxyToken);
+            const response = await fetch(`${proxyUrl}/chat/completions`, {
+              method: 'POST',
+              headers: { authorization: `Bearer ${proxyToken}` },
+              body: '{}',
+            });
+            assert.equal(response.status, 429);
+            await response.text();
+            return { exitCode: 1, stdout: '', stderr: 'container failed' };
+          },
+        });
+
+        let caught: unknown;
+        try {
+          await runner(runInput());
+        } catch (error) {
+          caught = error;
+        }
+        assert.ok(caught instanceof HarborInfraError);
+        assert.ok(caught.artifactRefs?.providerTelemetryPath);
+        const telemetry = JSON.parse(await readFile(caught.artifactRefs.providerTelemetryPath, 'utf8')) as {
+          summary: { failed: number };
+        };
+        assert.equal(telemetry.summary.failed, 1);
+      } finally {
+        await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+      }
     });
   });
 
