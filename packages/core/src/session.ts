@@ -85,6 +85,7 @@ export interface SessionHeader {
 
   // User metadata
   name: string;
+  titleIsManual: boolean;
   isFlagged: boolean;
   labels: string[];
 

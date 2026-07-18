@@ -119,6 +119,8 @@ export async function openInteractiveExecutionStoresForWrite(
 				run(() => sessionStore.setFlagged(sessionId, isFlagged)),
 			rename: (sessionId, name) =>
 				run(() => sessionStore.rename(sessionId, name)),
+			setGeneratedTitleIfAbsent: (sessionId, title) =>
+				run(() => sessionStore.setGeneratedTitleIfAbsent(sessionId, title)),
 			remove: (sessionId) => run(() => sessionStore.remove(sessionId)),
 		},
 		agentRunStore: {

@@ -1035,6 +1035,7 @@ export type { ParsedNoRealConnectionError } from './connection-error-copy.js';
 // session-name.ts (PR-UI-IPC-2)
 export type { NormalizeSessionNameResult } from './session-name.js';
 export {
+  DEFAULT_SESSION_NAME,
   SESSION_NAME_MAX_CODE_POINTS,
   normalizeUserSessionName,
 } from './session-name.js';

@@ -3853,6 +3853,7 @@ function backendContext(workspaceDir: string): BackendFactoryContext {
       createdAt: 123,
       lastUsedAt: 123,
       name: 'harbor cell test',
+      titleIsManual: true,
       isFlagged: false,
       labels: [],
       isArchived: false,

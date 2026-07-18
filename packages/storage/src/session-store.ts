@@ -9,7 +9,7 @@ import {
 import { appendJsonl } from './jsonl-append.js';
 import { classifyJsonRecord } from './json-prefix.js';
 import { chainWrite } from './write-queue.js';
-import { deriveTurnRecords, isPermissionMode, isSessionBlockedReason, isSessionStatus, normalizeUserSessionName } from '@maka/core';
+import { DEFAULT_SESSION_NAME, deriveTurnRecords, isPermissionMode, isSessionBlockedReason, isSessionStatus, normalizeUserSessionName } from '@maka/core';
 import type {
   CreateSessionInput,
   SessionHeader,
@@ -45,6 +45,7 @@ export interface SessionStore {
   unarchive(sessionId: string): Promise<void>;
   setFlagged(sessionId: string, isFlagged: boolean): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
+  setGeneratedTitleIfAbsent(sessionId: string, title: string): Promise<SessionHeader | null>;
   remove(sessionId: string): Promise<void>;
 }
 
@@ -76,7 +77,7 @@ class FileSessionStore implements SessionStore {
     // user's intent (per @xuan caller-semantics lock).
     let resolvedName: string;
     if (input.name === undefined) {
-      resolvedName = 'New Chat';
+      resolvedName = DEFAULT_SESSION_NAME;
     } else {
       const normalized = normalizeUserSessionName(input.name);
       if (!normalized.ok) {
@@ -91,6 +92,7 @@ class FileSessionStore implements SessionStore {
       createdAt: now,
       lastUsedAt: now,
       name: resolvedName,
+      titleIsManual: false,
       isFlagged: false,
       labels: input.labels ?? [],
       isArchived: false,
@@ -316,7 +318,22 @@ class FileSessionStore implements SessionStore {
     if (!normalized.ok) {
       throw new Error(normalized.error);
     }
-    await this.updateHeader(sessionId, { name: normalized.value });
+    await this.updateHeader(sessionId, { name: normalized.value, titleIsManual: true });
+  }
+
+  async setGeneratedTitleIfAbsent(sessionId: string, title: string): Promise<SessionHeader | null> {
+    const normalized = normalizeUserSessionName(title);
+    if (!normalized.ok) return null;
+    let nextHeader: SessionHeader | null = null;
+    await this.withQueue(sessionId, async () => {
+      const { header, messages } = await this.readFilePartsUnlocked(sessionId);
+      if (header.titleIsManual || header.name !== DEFAULT_SESSION_NAME) return;
+      if (normalized.value === header.name) return;
+      nextHeader = { ...header, name: normalized.value };
+      const lines = [JSON.stringify(nextHeader), ...messages.map((message) => JSON.stringify(message))];
+      await this.writeAtomic(this.sessionPath(sessionId), lines.join('\n') + '\n');
+    });
+    return nextHeader;
   }
 
   async remove(sessionId: string): Promise<void> {
@@ -485,12 +502,13 @@ export function isSafeSessionId(sessionId: string): boolean {
   return SESSION_ID_PATTERN.test(sessionId);
 }
 
-type StoredSessionHeader = Omit<SessionHeader, 'backend' | 'model' | 'permissionMode' | 'status' | 'blockedReason'> & {
+type StoredSessionHeader = Omit<SessionHeader, 'backend' | 'model' | 'permissionMode' | 'status' | 'blockedReason' | 'titleIsManual'> & {
   backend: string;
   model?: unknown;
   permissionMode?: unknown;
   status?: unknown;
   blockedReason?: unknown;
+  titleIsManual?: unknown;
 };
 
 function createJsonlCorruptionNote(header: SessionHeader, lineNumber: number, error: unknown): StoredMessage {
@@ -519,18 +537,22 @@ function migrateHeader(header: StoredSessionHeader, sessionId: string): SessionH
     blockedReason,
     statusUpdatedAt: header.statusUpdatedAt ?? header.archivedAt ?? header.lastMessageAt ?? header.lastUsedAt ?? header.createdAt,
   };
+  const titleIsManual = typeof header.titleIsManual === 'boolean'
+    ? header.titleIsManual
+    : normalizeSessionName(header.name) !== DEFAULT_SESSION_NAME;
   if (header.backend === 'claude') {
-    return normalizeMigratedHeader({ ...header, ...statusFields, backend: 'ai-sdk', model, permissionMode }, sessionId);
+    return normalizeMigratedHeader({ ...header, ...statusFields, titleIsManual, backend: 'ai-sdk', model, permissionMode }, sessionId);
   }
   if (header.backend === 'pi-agent') {
-    return normalizeMigratedHeader({ ...header, ...statusFields, backend: 'pi-agent', model, permissionMode }, sessionId);
+    return normalizeMigratedHeader({ ...header, ...statusFields, titleIsManual, backend: 'pi-agent', model, permissionMode }, sessionId);
   }
   if (header.backend === 'pi') {
-    return normalizeMigratedHeader({ ...header, ...statusFields, backend: 'pi-agent', model, permissionMode }, sessionId);
+    return normalizeMigratedHeader({ ...header, ...statusFields, titleIsManual, backend: 'pi-agent', model, permissionMode }, sessionId);
   }
   return normalizeMigratedHeader({
     ...header,
     ...statusFields,
+    titleIsManual,
     backend: header.backend === 'ai-sdk' ? 'ai-sdk' : 'fake',
     model,
     permissionMode,
@@ -552,6 +574,7 @@ function normalizeMigratedHeader(header: SessionHeader, sessionId: string): Sess
     isFiniteNumber(header.lastUsedAt) &&
     (header.lastMessageAt === undefined || isFiniteNumber(header.lastMessageAt)) &&
     typeof header.name === 'string' &&
+    typeof header.titleIsManual === 'boolean' &&
     typeof header.isFlagged === 'boolean' &&
     Array.isArray(header.labels) &&
     header.labels.every((label) => typeof label === 'string') &&
@@ -573,7 +596,7 @@ function normalizeMigratedHeader(header: SessionHeader, sessionId: string): Sess
   if (!valid) {
     throw new Error(`Invalid session header for session ${sessionId}: malformed fields`);
   }
-  return header;
+  return { ...header, name: normalizeSessionName(header.name) };
 }
 
 function isBackendKind(value: unknown): value is SessionHeader['backend'] {
@@ -634,7 +657,7 @@ function maxTimestamp(left: number | undefined, right: number | undefined): numb
 }
 
 function normalizeSessionName(name: string): string {
-  return name === 'New Session' ? 'New Chat' : name;
+  return name === 'New Session' ? DEFAULT_SESSION_NAME : name;
 }
 
 function lastMessagePreview(messages: StoredMessage[]): string | undefined {

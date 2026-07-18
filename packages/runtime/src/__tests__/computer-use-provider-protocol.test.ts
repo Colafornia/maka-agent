@@ -470,6 +470,7 @@ function header(
     createdAt: 1,
     lastUsedAt: 1,
     name: providerType,
+    titleIsManual: true,
     isFlagged: false,
     labels: [],
     isArchived: false,

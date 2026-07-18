@@ -3664,13 +3664,14 @@ describe('Maka Pi TUI runner', () => {
       terminal,
     });
 
-    terminal.input('/rename PR 946 修复');
+    terminal.input('/rename Updated title');
     terminal.input('\r');
 
     await waitFor(() => driver.renames.length === 1);
-    await waitFor(() => plainTerminalOutput(terminal.output()).includes('Session renamed to "PR 946 修复"'));
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('Session renamed to "Updated title"'));
+    await waitFor(() => terminal.titles.includes('Updated title (Maka)'));
 
-    assert.deepEqual(driver.renames, ['PR 946 修复']);
+    assert.deepEqual(driver.renames, ['Updated title']);
     assert.deepEqual(driver.prompts, []);
 
     exitMaka(terminal);
@@ -3771,6 +3772,64 @@ describe('Maka Pi TUI runner', () => {
     ]);
   });
 
+  test('shows a generated title for the active session in the terminal title', async () => {
+    const terminal = new FakeTerminal();
+    const session = fakeSessionSummary('session-1', '/repo', 'Generated title');
+    const driver = new SlashCommandDriver([session]);
+    let notifyTitleChanged: ((sessionId: string) => void) | undefined;
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+      subscribeSessionTitleChanges: (listener) => {
+        notifyTitleChanged = listener;
+        return () => {};
+      },
+    });
+
+    notifyTitleChanged?.('session-1');
+
+    await waitFor(() => terminal.titles.includes('Generated title (Maka)'));
+    assert.equal(plainTerminalOutput(terminal.screenOutput()).includes('Generated title'), false);
+
+    exitMaka(terminal);
+    await run;
+  });
+
+  test('ignores a delayed title refresh after switching sessions', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new DeferredListSessionsDriver([
+      fakeSessionSummary('session-1', '/repo', 'Old title'),
+      fakeSessionSummary('session-2', '/repo', 'Current title'),
+    ]);
+    let notifyTitleChanged: ((sessionId: string) => void) | undefined;
+    const run = runMakaPiTui({
+      title: 'Maka', driver, cwd: '/repo', model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription', permissionMode: 'ask', terminal,
+      subscribeSessionTitleChanges: (listener) => {
+        notifyTitleChanged = listener;
+        return () => {};
+      },
+    });
+
+    notifyTitleChanged?.('session-1');
+    await waitFor(() => driver.listCalls === 1);
+    terminal.input('/session session-2');
+    terminal.input('\r');
+    await waitFor(() => terminal.titles.includes('Current title (Maka)'));
+
+    driver.releaseList();
+    await delay(0);
+    assert.equal(terminal.titles.some((title) => title.includes('Old title')), false);
+
+    exitMaka(terminal);
+    await run;
+  });
+
   test('rejects /rename without a new name', async () => {
     const terminal = new FakeTerminal();
     const driver = new SlashCommandDriver();
@@ -3818,6 +3877,7 @@ describe('Maka Pi TUI runner', () => {
 
     await waitFor(() => driver.sessionIds.length === 1);
     await waitFor(() => terminal.output().includes('Resumed session "Existing chat"'));
+    await waitFor(() => terminal.titles.includes('Existing chat (Maka)'));
 
     assert.deepEqual(driver.sessionIds, ['session-2']);
     assert.deepEqual(driver.prompts, []);
@@ -4401,7 +4461,8 @@ describe('Maka Pi TUI runner', () => {
 
   test('/new clears the transcript and starts a fresh session', async () => {
     const terminal = new FakeTerminal();
-    const driver = new SlashCommandDriver();
+    const driver = new SlashCommandDriver([fakeSessionSummary('session-1', '/repo', 'Previous title')]);
+    let notifyTitleChanged: ((sessionId: string) => void) | undefined;
     const run = runMakaPiTui({
       title: 'Maka',
       driver,
@@ -4410,7 +4471,14 @@ describe('Maka Pi TUI runner', () => {
       connectionSlug: 'claude-subscription',
       permissionMode: 'ask',
       terminal,
+      subscribeSessionTitleChanges: (listener) => {
+        notifyTitleChanged = listener;
+        return () => {};
+      },
     });
+
+    notifyTitleChanged?.('session-1');
+    await waitFor(() => terminal.titles.includes('Previous title (Maka)'));
 
     terminal.input('remember this');
     terminal.input('\r');
@@ -4427,6 +4495,7 @@ describe('Maka Pi TUI runner', () => {
     await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('输入消息开始对话，或用斜杠命令：'));
     // The previous turn is gone from the visible transcript.
     await waitFor(() => !plainTerminalOutput(terminal.screenOutput()).includes('remember this'));
+    assert.equal(terminal.titles.at(-1), 'Maka');
 
     exitMaka(terminal);
     await Promise.race([

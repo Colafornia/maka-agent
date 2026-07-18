@@ -862,6 +862,7 @@ function header(overrides: Partial<SessionHeader> = {}): SessionHeader {
     createdAt: 1,
     lastUsedAt: 1,
     name: 'Pi test',
+    titleIsManual: true,
     isFlagged: false,
     labels: [],
     isArchived: false,

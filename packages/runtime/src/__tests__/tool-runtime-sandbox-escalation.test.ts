@@ -132,7 +132,7 @@ function harness(autoReviewer: AutoApprovalReviewer) {
   });
   const header: SessionHeader = {
     id: 'session-1', workspaceRoot: '/tmp', cwd: '/tmp', createdAt: 1, lastUsedAt: 1,
-    name: 'Test', isFlagged: false, labels: [], isArchived: false, status: 'active',
+    name: 'Test', titleIsManual: true, isFlagged: false, labels: [], isArchived: false, status: 'active',
     statusUpdatedAt: 1, hasUnread: false, backend: 'ai-sdk', llmConnectionSlug: 'c',
     connectionLocked: true, model: 'm', permissionMode: 'execute', schemaVersion: 1,
   };

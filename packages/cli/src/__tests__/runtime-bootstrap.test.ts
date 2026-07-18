@@ -34,6 +34,32 @@ import {
 } from '../runtime-bootstrap.js';
 
 describe('Maka CLI runtime bootstrap', () => {
+  test('forwards generated title notifications to the TUI host', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const connectionStore = createConnectionStore(workspaceRoot);
+      await connectionStore.create({
+        slug: 'local',
+        name: 'Local Ollama',
+        providerType: 'ollama',
+        defaultModel: 'llama3.2',
+      });
+      const onSessionTitleChanged = (_sessionId: string): void => {};
+
+      const context = await createMakaCliRuntimeContext({
+        surface: 'tui',
+        workspaceRoot,
+        cwd: '/repo',
+        onSessionTitleChanged,
+      });
+      try {
+        const runtimeDeps = (context.runtime as unknown as RuntimeWithPrivateDeps).deps;
+        assert.equal(runtimeDeps.onSessionTitleChanged, onSessionTitleChanged);
+      } finally {
+        await context.close();
+      }
+    });
+  });
+
   test('loads the default connection and can create an ai-sdk session', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const connectionStore = createConnectionStore(workspaceRoot);
@@ -714,6 +740,7 @@ interface RuntimeWithPrivateDeps {
     backends: BackendRegistry;
     store: SessionStore;
     runtimeInvocationObserver?: (result: unknown) => void | Promise<void>;
+    onSessionTitleChanged?: (sessionId: string) => void;
     childTools?: readonly MakaTool[];
   };
 }

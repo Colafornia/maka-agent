@@ -81,6 +81,7 @@ export class AttentionController {
   // the attention title marker until they engage (focus, answer, or a new turn).
   private attention = false;
   private turnStartedAt = 0;
+  private baseTitle: string;
   private lastTitle: string | null = null;
   // Set once the session is closing; every event method then no-ops so a turn
   // finalizer that settles after close() cannot re-dirty the handed-back title.
@@ -96,6 +97,7 @@ export class AttentionController {
     private readonly terminal: AttentionTerminal,
     private readonly options: AttentionControllerOptions,
   ) {
+    this.baseTitle = options.baseTitle;
     this.now = options.now ?? Date.now;
     this.longTurnThresholdMs = options.longTurnThresholdMs ?? DEFAULT_LONG_TURN_THRESHOLD_MS;
     this.busySpinnerFrames = options.busySpinnerFrames && options.busySpinnerFrames.length > 0
@@ -105,6 +107,12 @@ export class AttentionController {
       ? options.busySpinnerIntervalMs
       : DEFAULT_BUSY_SPINNER_INTERVAL_MS;
     this.scheduleSpinnerInterval = options.scheduleSpinnerInterval ?? defaultScheduleSpinnerInterval;
+    this.refreshTitle();
+  }
+
+  setBaseTitle(title: string): void {
+    if (this.stopped) return;
+    this.baseTitle = title;
     this.refreshTitle();
   }
 
@@ -204,10 +212,10 @@ export class AttentionController {
     // but what it actually needs is the user, so surface that first. Attention
     // is only ever set while unfocused, so a normal running turn still shows busy.
     const title = this.attention
-      ? `${ATTENTION_TITLE_MARKER}${this.options.baseTitle}`
+      ? `${ATTENTION_TITLE_MARKER}${this.baseTitle}`
       : this.busy
-        ? `${this.busySpinnerFrames[this.spinnerFrame] ?? ''} ${this.options.baseTitle}`
-        : this.options.baseTitle;
+        ? `${this.busySpinnerFrames[this.spinnerFrame] ?? ''} ${this.baseTitle}`
+        : this.baseTitle;
     // Only write on a real change so the title stream stays quiet between turns
     // and a test can read the transitions rather than a run of duplicates. Each
     // spinner tick advances the frame first, so the title genuinely differs.

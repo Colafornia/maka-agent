@@ -4,6 +4,7 @@ import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { startConfigFileWatcher, type ConfigFileWatcher } from './config-file-watcher.js';
 import {
+  DEFAULT_SESSION_NAME,
   filterModelVisibleTaskLedgerTasks,
   isDeepResearchSession,
   resolveModelVisionSupport,
@@ -57,6 +58,7 @@ import {
   buildParentAgentTools,
   buildSubagentToolGroup,
   getAIModel,
+  generateSessionTitle as generateRuntimeSessionTitle,
   buildProviderOptions,
   recordLlmCall,
   recordToolInvocation,
@@ -1095,6 +1097,20 @@ const runtime = new SessionManager({
       onDiagnostic: (diagnostic) => console.warn('[history-compact-cleanup]', diagnostic),
     });
   },
+  generateSessionTitle: async ({ sessionId, header, sourceText }) => {
+    const { connection, apiKey, model } = await getReadyConnection(header.llmConnectionSlug, header.model);
+    return generateRuntimeSessionTitle({
+      model: getAIModel({
+        connection,
+        apiKey: apiKey ?? '',
+        modelId: model,
+        fetch: buildSubscriptionModelFetch(connection, sessionId, model),
+      }),
+      providerOptions: buildProviderOptions(connection, model),
+      sourceText,
+    });
+  },
+  onSessionTitleChanged: (sessionId) => emitSessionsChanged('renamed', sessionId),
   newId: randomUUID,
   now: Date.now,
 });
@@ -1519,7 +1535,7 @@ async function handleQuickChatStart(
         llmConnectionSlug: ready.connection.slug,
         model: ready.model,
         permissionMode,
-        name: input.mode === 'deep_research' ? 'Deep Research' : 'New Chat',
+        name: input.mode === 'deep_research' ? 'Deep Research' : DEFAULT_SESSION_NAME,
         labels: input.mode === 'deep_research' ? [DEEP_RESEARCH_SESSION_LABEL] : [],
       });
     },

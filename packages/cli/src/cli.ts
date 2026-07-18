@@ -175,6 +175,7 @@ export async function runMakaCli(argv: string[] = process.argv.slice(2)): Promis
       return command.exitCode;
     case 'tui': {
       const workspaceRoot = resolveMakaWorkspaceRoot();
+      let sessionTitleListener: ((sessionId: string) => void) | undefined;
       const resumeTarget = command.resumeSessionId
         ? await resolveTuiResumeTarget(workspaceRoot, command.resumeSessionId)
         : undefined;
@@ -182,6 +183,7 @@ export async function runMakaCli(argv: string[] = process.argv.slice(2)): Promis
         surface: 'tui' as const,
         workspaceRoot,
         cwd: process.cwd(),
+        onSessionTitleChanged: (sessionId: string) => sessionTitleListener?.(sessionId),
         ...(resumeTarget
           ? {
               requestedConnectionSlug: resumeTarget.requestedConnectionSlug,
@@ -240,6 +242,12 @@ export async function runMakaCli(argv: string[] = process.argv.slice(2)): Promis
           modelContextWindow: resolveSelectedModelContextWindow(context.target.connection, context.target.model),
           permissionMode: 'ask',
           subscribeShellRunUpdates: context.subscribeShellRunUpdates,
+          subscribeSessionTitleChanges: (listener) => {
+            sessionTitleListener = listener;
+            return () => {
+              if (sessionTitleListener === listener) sessionTitleListener = undefined;
+            };
+          },
           listShellRunUpdates: context.listShellRunUpdates,
           skills: context.skills,
           goalLifecycle: context.goalContinuation,

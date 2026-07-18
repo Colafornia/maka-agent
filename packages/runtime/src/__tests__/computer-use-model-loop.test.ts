@@ -449,6 +449,7 @@ function header(): SessionHeader {
     createdAt: 1,
     lastUsedAt: 1,
     name: 'Computer model loop',
+    titleIsManual: true,
     isFlagged: false,
     labels: [],
     isArchived: false,

@@ -11,6 +11,7 @@ import type { BranchFromTurnInput, CreateSessionInput, UserMessageInput } from '
 import type { SessionSummary, StoredMessage } from '@maka/core/session';
 import { userFacingText } from '@maka/core/session';
 import type { ThinkingLevel } from '@maka/core/model-thinking';
+import { DEFAULT_SESSION_NAME } from '@maka/core';
 
 const execFileAsync = promisify(execFile);
 
@@ -189,7 +190,7 @@ class RuntimeMakaSessionDriver implements MakaSessionDriver {
     prompt: string,
     options: MakaPreparePromptOptions = {},
   ): Promise<MakaPreparedSessionTurn> {
-    const sessionId = await this.ensureSession(prompt);
+    const sessionId = await this.ensureSession();
     const turnId = options.turnId ?? this.newId();
     const pendingReminder = this.pendingCwdReminder;
     const baseModelText = options.modelText ?? prompt;
@@ -432,11 +433,11 @@ class RuntimeMakaSessionDriver implements MakaSessionDriver {
     return this.sessionId;
   }
 
-  private async ensureSession(prompt: string): Promise<string> {
+  private async ensureSession(): Promise<string> {
     if (this.sessionId) return this.sessionId;
     const session = await this.input.runtime.createSession({
       cwd: this.cwd,
-      name: prompt.slice(0, 42) || '新建对话',
+      name: DEFAULT_SESSION_NAME,
       backend: 'ai-sdk',
       llmConnectionSlug: this.llmConnectionSlug,
       model: this.model,

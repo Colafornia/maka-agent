@@ -6,6 +6,7 @@ import type {
   UiLocale,
   UserQuestionResponse,
 } from '@maka/core';
+import { DEFAULT_SESSION_NAME } from '@maka/core';
 import {
   armLiveTurn,
   dequeueInteractionByRequestId,
@@ -263,7 +264,7 @@ export function createAppShellChatActions(deps: {
         const session = await window.maka.sessions.create({
           // Omit permissionMode so main.ts's sessions:create resolves the
           // configured chatDefaults.permissionMode as the single authority.
-          name: text.slice(0, 42) || copy.newConversation,
+          name: DEFAULT_SESSION_NAME,
           ...(validPendingNewChatModel
             ? {
                 llmConnectionSlug: validPendingNewChatModel.llmConnectionSlug,

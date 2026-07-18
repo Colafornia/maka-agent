@@ -513,6 +513,7 @@ export {
 export type { StreamWatchdogInput, StreamWatchdogPhase, StreamWatchdogTimeout } from './stream-watchdog.js';
 
 export { getAIModel, buildProviderOptions } from './model-factory.js';
+export { fallbackSessionTitle, generateSessionTitle, sessionTitleSource } from './session-title.js';
 export type { ModelFactoryInput as GetAIModelInput } from './model-factory.js';
 export {
   extractOAuthSubscriptionAccessToken,

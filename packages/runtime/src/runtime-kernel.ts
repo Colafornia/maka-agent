@@ -76,7 +76,7 @@ export interface TurnStartOptions {
   runId?: string;
   userMessageId?: string;
   durability?: AgentRunDurability;
-  onRunStarted?: (runId: string) => void | Promise<void>;
+  onRunStarted?: (runId: string, initialHeader: SessionHeader) => void | Promise<void>;
 }
 
 /**
@@ -234,7 +234,7 @@ export class RuntimeKernel implements RuntimeKernelLike {
             this.appendTurnState(targetSessionId, turnId, status, lineage, options),
         },
       });
-      yield* this.runAgentTurn(sessionId, input, run, true, options.onRunStarted);
+      yield* this.runAgentTurn(sessionId, input, run, true, options.onRunStarted, header);
     } finally {
       if (pending) this.finishPendingTurnStart(sessionId, false);
     }
@@ -418,7 +418,8 @@ export class RuntimeKernel implements RuntimeKernelLike {
     input: UserMessageInput,
     run: AgentRun,
     steering = false,
-    onRunStarted?: (runId: string) => void | Promise<void>,
+    onRunStarted?: (runId: string, initialHeader: SessionHeader) => void | Promise<void>,
+    initialHeader?: SessionHeader,
   ): AsyncIterable<SessionEvent> {
     const sessionEvents = new AsyncEventQueue<SessionEvent>();
     const abortController = new AbortController();
@@ -426,7 +427,7 @@ export class RuntimeKernel implements RuntimeKernelLike {
     let begin: AgentRunBeginResult;
     try {
       begin = await run.begin();
-      await onRunStarted?.(run.runId);
+      if (onRunStarted && initialHeader) await onRunStarted(run.runId, initialHeader);
     } catch (error) {
       await run.recordFailure(error);
       await run.finalize();

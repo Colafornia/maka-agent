@@ -57,6 +57,97 @@ import {
 } from '../expert-catalog.js';
 import { AGENT_TEAM_CHILD_TOOL_NAMES } from '../agent-team-tool-names.js';
 
+describe('SessionManager automatic titles', () => {
+  test('starts after user persistence and does not block the turn', async () => {
+    const store = new MemorySessionStore();
+    const backends = new BackendRegistry();
+    backends.register('fake', (ctx) => new TestBackend(ctx));
+    const titleStarted = makeGate();
+    const titleRelease = makeGate();
+    const titleChanged = makeGate();
+    const callbackRuns: string[] = [];
+    const manager = new SessionManager({
+      store,
+      backends,
+      newId: nextId(),
+      now: nextNow(500),
+      generateSessionTitle: async ({ sessionId, sourceText }) => {
+        expect(sourceText).toBe('visible prompt');
+        expect((await store.readMessages(sessionId)).some((message) => message.type === 'user')).toBe(true);
+        titleStarted.release();
+        await titleRelease.promise;
+        return 'Generated title';
+      },
+      onSessionTitleChanged: () => titleChanged.release(),
+    });
+    const session = await manager.createSession(makeInput({ name: 'New Chat' }));
+
+    await drain(manager.sendMessage(session.id, {
+      turnId: 'turn-title',
+      text: '<system-reminder>hidden</system-reminder>model envelope',
+      displayText: 'visible prompt',
+    }, { onRunStarted: (runId) => { callbackRuns.push(runId); } }));
+    await titleStarted.promise;
+    expect((await store.readHeader(session.id)).name).toBe('New Chat');
+    expect(callbackRuns).toHaveLength(1);
+
+    titleRelease.release();
+    await titleChanged.promise;
+    expect((await store.readHeader(session.id)).name).toBe('Generated title');
+  });
+
+  test('falls back once on generation failure', async () => {
+    const store = new MemorySessionStore();
+    const backends = new BackendRegistry();
+    backends.register('fake', (ctx) => new TestBackend(ctx));
+    const changed = makeGate();
+    let calls = 0;
+    const manager = new SessionManager({
+      store,
+      backends,
+      newId: nextId(),
+      now: nextNow(600),
+      generateSessionTitle: async () => { calls += 1; throw new Error('offline'); },
+      onSessionTitleChanged: () => changed.release(),
+    });
+    const session = await manager.createSession(makeInput({ name: 'New Chat' }));
+
+    await drain(manager.sendMessage(session.id, { turnId: 'first', text: '\nFallback title\nignored' }));
+    await changed.promise;
+    await drain(manager.sendMessage(session.id, { turnId: 'second', text: 'second prompt' }));
+
+    expect((await store.readHeader(session.id)).name).toBe('Fallback title');
+    expect(calls).toBe(1);
+  });
+
+  test('does not overwrite or notify after a racing manual rename', async () => {
+    const store = new MemorySessionStore();
+    const backends = new BackendRegistry();
+    backends.register('fake', (ctx) => new TestBackend(ctx));
+    const release = makeGate();
+    const attempted = makeGate();
+    store.generatedTitleAttempted = attempted;
+    let notifications = 0;
+    const manager = new SessionManager({
+      store,
+      backends,
+      newId: nextId(),
+      now: nextNow(700),
+      generateSessionTitle: async () => { await release.promise; return 'Generated loses'; },
+      onSessionTitleChanged: () => { notifications += 1; },
+    });
+    const session = await manager.createSession(makeInput({ name: 'New Chat' }));
+
+    await drain(manager.sendMessage(session.id, { turnId: 'turn-race', text: 'hello' }));
+    await manager.renameSession(session.id, 'Manual wins');
+    release.release();
+    await attempted.promise;
+
+    expect((await store.readHeader(session.id)).name).toBe('Manual wins');
+    expect(notifications).toBe(0);
+  });
+});
+
 describe('SessionManager manual compaction', () => {
   test('runs backend history compaction as a runtime turn and persists diagnostics', async () => {
     const store = new MemorySessionStore();
@@ -453,8 +544,19 @@ describe('SessionManager permission mode updates', () => {
     await manager.updateSession(session.id, { name: 'After' });
 
     expect(store.disposeCount).toBe(0);
+    expect((await store.readHeader(session.id)).titleIsManual).toBe(true);
     await drain(manager.sendMessage(session.id, { turnId: 'turn-2', text: 'again' }));
     expect(built).toEqual(['Before']);
+  });
+
+  test('name updates cannot clear the manual-title marker', async () => {
+    const store = new MemorySessionStore();
+    const manager = new SessionManager({ store, backends: new BackendRegistry(), newId: nextId(), now: nextNow(6_100) });
+    const session = await manager.createSession(makeInput({ name: 'New Chat' }));
+
+    await manager.updateSession(session.id, { name: 'Manual title', titleIsManual: false });
+
+    expect((await store.readHeader(session.id)).titleIsManual).toBe(true);
   });
 
   test('sendMessage delegates through RuntimeKernel while preserving the SessionEvent stream', async () => {
@@ -7586,6 +7688,7 @@ class MemorySessionStore implements SessionStore {
   failAfterNextAppendMessage: ((message: StoredMessage) => boolean) | undefined;
   disposeCount = 0;
   nextReadHeaderGate: { started: Gate; release: Gate } | undefined;
+  generatedTitleAttempted: Gate | undefined;
 
   async create(input: CreateSessionInput): Promise<SessionHeader> {
     const header: SessionHeader = {
@@ -7595,6 +7698,7 @@ class MemorySessionStore implements SessionStore {
       createdAt: 1,
       lastUsedAt: 1,
       name: input.name ?? 'New Chat',
+      titleIsManual: false,
       isFlagged: false,
       labels: input.labels ?? [],
       isArchived: false,
@@ -7709,7 +7813,14 @@ class MemorySessionStore implements SessionStore {
   }
 
   async rename(sessionId: string, name: string): Promise<void> {
-    await this.updateHeader(sessionId, { name });
+    await this.updateHeader(sessionId, { name, titleIsManual: true });
+  }
+
+  async setGeneratedTitleIfAbsent(sessionId: string, title: string): Promise<SessionHeader | null> {
+    const current = await this.readHeader(sessionId);
+    this.generatedTitleAttempted?.release();
+    if (current.titleIsManual || current.name !== 'New Chat') return null;
+    return this.updateHeader(sessionId, { name: title });
   }
 
   async remove(sessionId: string): Promise<void> {

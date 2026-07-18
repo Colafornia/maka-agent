@@ -1113,6 +1113,7 @@ function makeHeader(id: string): SessionHeader {
     createdAt: ts,
     lastUsedAt: ts,
     name: 'Session',
+    titleIsManual: true,
     isFlagged: false,
     labels: [],
     isArchived: false,

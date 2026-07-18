@@ -67,6 +67,8 @@ export type NormalizeSessionNameResult =
   | { ok: true; value: string }
   | { ok: false; error: string };
 
+export const DEFAULT_SESSION_NAME = 'New Chat';
+
 /**
  * @kenji + @xuan: code-point cap. 80 chars matches the existing
  * `store.rename` behavior; do NOT change here.

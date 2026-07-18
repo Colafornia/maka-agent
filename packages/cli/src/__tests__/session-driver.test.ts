@@ -34,7 +34,7 @@ describe('Maka session driver', () => {
     assert.equal(driver.getSessionId(), 'session-1');
     assert.deepEqual(runtime.created, [{
       cwd: '/repo',
-      name: 'please inspect this workspace',
+      name: 'New Chat',
       backend: 'ai-sdk',
       llmConnectionSlug: 'anthropic',
       model: 'claude-sonnet-4-5',
@@ -51,7 +51,7 @@ describe('Maka session driver', () => {
     assert.deepEqual(events.map((event) => event.type), ['text_delta', 'complete']);
   });
 
-  test('titles and displayText use the typed prompt when modelText is a composed envelope', async () => {
+  test('new sessions use the default title while displayText keeps the typed prompt', async () => {
     const runtime = new RecordingRuntime();
     const driver = createMakaSessionDriver({
       runtime,
@@ -66,7 +66,7 @@ describe('Maka session driver', () => {
     const turn = await driver.preparePrompt(typed, { modelText: composed });
     await collect(turn.events);
 
-    assert.equal(runtime.created[0]?.name, typed);
+    assert.equal(runtime.created[0]?.name, 'New Chat');
     assert.deepEqual(runtime.sent[0]?.input, {
       turnId: 'turn-1',
       text: composed,
@@ -821,7 +821,7 @@ describe('Maka session driver', () => {
     // reusing the old one — and it kept the current model.
     assert.equal(runtime.created.length, 2);
     assert.equal(runtime.created[1]?.model, 'claude-opus-4-1');
-    assert.equal(runtime.created[1]?.name, 'second');
+    assert.equal(runtime.created[1]?.name, 'New Chat');
   });
 
   test('steer / queueMessage / takePendingFollowup / retractQueued delegate to the runtime', async () => {

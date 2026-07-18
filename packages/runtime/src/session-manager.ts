@@ -46,6 +46,7 @@ import type { PermissionResponse } from '@maka/core/permission';
 import type { UserQuestionResponse } from '@maka/core/user-question';
 import type { PermissionMode } from '@maka/core/permission';
 import {
+  DEFAULT_SESSION_NAME,
   DEEP_RESEARCH_SESSION_LABEL,
   failureClassFromCompleteStopReason,
   isDeepResearchSession,
@@ -79,6 +80,7 @@ import type {
   InvocationSource,
 } from './invocation-context.js';
 import { RuntimeKernel, type RuntimeKernelLike, type TurnStartOptions } from './runtime-kernel.js';
+import { fallbackSessionTitle, sessionTitleSource } from './session-title.js';
 import type { HistoryCompactCleanupRequest } from './runtime-kernel.js';
 import {
   buildStatusPatch,
@@ -190,6 +192,7 @@ export interface SessionStore {
   unarchive(sessionId: string): Promise<void>;
   setFlagged(sessionId: string, isFlagged: boolean): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
+  setGeneratedTitleIfAbsent?(sessionId: string, title: string): Promise<SessionHeader | null>;
   remove(sessionId: string): Promise<void>;
 }
 
@@ -284,6 +287,8 @@ export interface SessionManagerDeps {
   runtimeKernel?: RuntimeKernelLike;
   shellRuns?: ShellRunProcessManager;
   cleanupHistoryCompactArtifacts?: (input: HistoryCompactCleanupRequest) => Promise<void>;
+  generateSessionTitle?: (input: { sessionId: string; header: SessionHeader; sourceText: string }) => Promise<string | undefined>;
+  onSessionTitleChanged?: (sessionId: string) => void;
 }
 
 export class SessionManager {
@@ -492,7 +497,11 @@ export class SessionManager {
       throw new Error('Cannot change backend configuration while a turn is running');
     }
 
-    const next = await this.deps.store.updateHeader(sessionId, patch);
+    const { name, titleIsManual: _titleIsManual, ...rest } = patch;
+    if (name !== undefined) await this.deps.store.rename(sessionId, name);
+    const next = Object.keys(rest).length > 0
+      ? await this.deps.store.updateHeader(sessionId, rest)
+      : await this.deps.store.readHeader(sessionId);
     this.runtimeKernel.updateCachedHeader(sessionId, next);
     if (backendConfigChanged) {
       // AgentBackend instances snapshot backend/model config at construction
@@ -611,7 +620,31 @@ export class SessionManager {
     input: UserMessageInput,
     options: TurnStartOptions = {},
   ): AsyncIterable<SessionEvent> {
-    yield* this.runtimeKernel.startTurn(sessionId, input, options);
+    const sourceText = sessionTitleSource(input);
+    const onRunStarted = this.deps.generateSessionTitle
+      ? async (runId: string, header: SessionHeader) => {
+          await options.onRunStarted?.(runId, header);
+          if (!header.connectionLocked && !header.titleIsManual && header.name === DEFAULT_SESSION_NAME && sourceText) {
+            void this.generateTitleInBackground(sessionId, header, sourceText);
+          }
+        }
+      : options.onRunStarted;
+    yield* this.runtimeKernel.startTurn(sessionId, input, { ...options, onRunStarted });
+  }
+
+  private async generateTitleInBackground(sessionId: string, header: SessionHeader, sourceText: string): Promise<void> {
+    let generated: string | undefined;
+    try {
+      generated = await this.deps.generateSessionTitle?.({ sessionId, header, sourceText });
+    } catch {}
+    try {
+      const title = generated ?? fallbackSessionTitle(sourceText);
+      if (!title) return;
+      const next = await this.deps.store.setGeneratedTitleIfAbsent?.(sessionId, title);
+      if (!next) return;
+      this.runtimeKernel.updateCachedHeader(sessionId, next);
+      this.deps.onSessionTitleChanged?.(sessionId);
+    } catch {}
   }
 
   async *compactSession(
@@ -1291,7 +1324,7 @@ export function headerToSummary(h: SessionHeader): SessionSummary {
     id: h.id,
     cwd: h.cwd,
     ...(h.pendingCwdReminder ? { pendingCwdReminder: h.pendingCwdReminder } : {}),
-    name: h.name === 'New Session' ? 'New Chat' : h.name,
+    name: h.name === 'New Session' ? DEFAULT_SESSION_NAME : h.name,
     isFlagged: h.isFlagged,
     isArchived: h.isArchived,
     labels: h.labels,

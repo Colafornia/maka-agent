@@ -14,6 +14,7 @@ function makeHeader(overrides: Partial<SessionHeader> = {}): SessionHeader {
     createdAt: 1,
     lastUsedAt: 1,
     name: 'Usage fixture',
+    titleIsManual: true,
     isFlagged: false,
     labels: [],
     isArchived: false,

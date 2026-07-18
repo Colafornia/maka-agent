@@ -32,6 +32,7 @@ import {
   buildSubscriptionModelFetch,
   evaluateAutomationCanFire,
   getAIModel,
+  generateSessionTitle as generateRuntimeSessionTitle,
   loadHistoryCompactBlocksFromArtifacts,
   replayPlanItemsToModelMessages,
   resolveSkillDiscoveryPaths,
@@ -120,6 +121,7 @@ export interface CreateMakaCliRuntimeContextInput {
   /** Canonical cwd used for one resumed session without rewriting its stored header. */
   sessionCwdOverride?: { sessionId: string; cwd: string };
   runtimeInvocationObserver?: (result: InvocationResult) => void | Promise<void>;
+  onSessionTitleChanged?: (sessionId: string) => void;
   /**
    * Optional cron executor. When provided, the Automation tool advertises the
    * cron kind and cron fires spawn a fresh session + run via this callback
@@ -574,6 +576,38 @@ export async function createMakaCliRuntimeContext(
     backends,
     ...(input.surface === 'tui' ? { childTools: childAgentTools } : {}),
     runtimeInvocationObserver: input.runtimeInvocationObserver,
+    onSessionTitleChanged: input.onSessionTitleChanged,
+    ...(input.surface === 'tui' ? {
+      generateSessionTitle: async ({ sessionId, header, sourceText }) => {
+        const ready = await resolveSessionTargetForSlug(header.llmConnectionSlug, {
+          connectionStore,
+          credentialStore,
+          requestedModel: header.model,
+        });
+        const modelFetch = buildSubscriptionModelFetch({
+          connection: ready.connection,
+          sessionId,
+          modelId: ready.model,
+          ...(ready.connection.providerType === 'claude-subscription' ? {
+            claude: {
+              cloakEnabled: isMakaClaudeSubscriptionCloakEnabled(),
+              deviceId: await getOrCreateCliClaudeDeviceId(input.workspaceRoot),
+              accountUuid: ready.oauthTokens?.account_uuid ?? '',
+            },
+          } : {}),
+        });
+        return generateRuntimeSessionTitle({
+          model: getAIModel({
+            connection: ready.connection,
+            apiKey: ready.apiKey ?? '',
+            modelId: ready.model,
+            fetch: modelFetch,
+          }),
+          providerOptions: buildProviderOptions(ready.connection, ready.model),
+          sourceText,
+        });
+      },
+    } : {}),
     cleanupHistoryCompactArtifacts: async (cleanupInput) => {
       await cleanupLegacyHistoryCompactArtifacts({
         ...cleanupInput,

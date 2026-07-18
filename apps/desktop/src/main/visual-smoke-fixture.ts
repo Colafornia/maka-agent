@@ -2041,6 +2041,7 @@ function header(input: {
     lastUsedAt: input.lastMessageAt,
     lastMessageAt: input.lastMessageAt,
     name: input.name,
+    titleIsManual: true,
     isFlagged: input.isFlagged ?? false,
     labels: [],
     isArchived: input.isArchived ?? false,

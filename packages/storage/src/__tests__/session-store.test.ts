@@ -178,6 +178,7 @@ describe('FileSessionStore CRUD', () => {
       await store.rename(header.id, '  Brand new name  ');
       const renamed = await store.readHeader(header.id);
       assert.equal(renamed.name, 'Brand new name');
+      assert.equal(renamed.titleIsManual, true);
 
       await assert.rejects(store.rename(header.id, '   '), /name cannot be empty/);
 
@@ -185,6 +186,25 @@ describe('FileSessionStore CRUD', () => {
       await store.rename(header.id, overly);
       const bounded = await store.readHeader(header.id);
       assert.equal(bounded.name.length, 80);
+    });
+  });
+
+  test('generated titles only replace untouched default titles', async () => {
+    await withStore(async (store) => {
+      const generatedFirst = await store.create(makeInput({ name: 'New Chat' }));
+      assert.equal(generatedFirst.titleIsManual, false);
+      assert.equal((await store.setGeneratedTitleIfAbsent(generatedFirst.id, '  Generated title  '))?.name, 'Generated title');
+      await store.rename(generatedFirst.id, 'Manual title');
+      assert.equal((await store.setGeneratedTitleIfAbsent(generatedFirst.id, 'Too late')), null);
+      assert.equal((await store.readHeader(generatedFirst.id)).name, 'Manual title');
+
+      const manualFirst = await store.create(makeInput({ name: 'New Chat' }));
+      await store.rename(manualFirst.id, 'Manual wins');
+      assert.equal(await store.setGeneratedTitleIfAbsent(manualFirst.id, 'Generated loses'), null);
+      assert.equal((await store.readHeader(manualFirst.id)).name, 'Manual wins');
+
+      const unchanged = await store.create(makeInput({ name: 'New Chat' }));
+      assert.equal(await store.setGeneratedTitleIfAbsent(unchanged.id, ' New Chat '), null);
     });
   });
 
@@ -330,9 +350,38 @@ describe('FileSessionStore CRUD', () => {
       assert.equal(header.backend, 'ai-sdk');
       assert.equal(header.permissionMode, 'ask');
       assert.equal(header.status, 'active');
+      assert.equal(header.titleIsManual, true);
       const [summary] = await store.list();
       assert.equal(summary?.permissionMode, 'ask');
       assert.equal(summary?.status, 'active');
+    });
+  });
+
+  test('migrates legacy default titles as generated-title candidates', async () => {
+    await withStore(async (store, workspaceRoot) => {
+      const sessionId = 'legacy-new-chat';
+      const sessionDir = join(workspaceRoot, 'sessions', sessionId);
+      await mkdir(sessionDir, { recursive: true });
+      const legacy = makeRawHeader({ id: sessionId, workspaceRoot, name: 'New Chat' });
+      delete (legacy as Partial<SessionHeader>).titleIsManual;
+      await writeFile(join(sessionDir, 'session.jsonl'), JSON.stringify(legacy) + '\n', 'utf8');
+
+      assert.equal((await store.readHeader(sessionId)).titleIsManual, false);
+    });
+  });
+
+  test('migrates New Session as the canonical generated-title candidate', async () => {
+    await withStore(async (store, workspaceRoot) => {
+      const sessionId = 'legacy-new-session';
+      const sessionDir = join(workspaceRoot, 'sessions', sessionId);
+      await mkdir(sessionDir, { recursive: true });
+      const legacy = makeRawHeader({ id: sessionId, workspaceRoot, name: 'New Session' });
+      delete (legacy as Partial<SessionHeader>).titleIsManual;
+      await writeFile(join(sessionDir, 'session.jsonl'), JSON.stringify(legacy) + '\n', 'utf8');
+
+      const header = await store.readHeader(sessionId);
+      assert.equal(header.name, 'New Chat');
+      assert.equal(header.titleIsManual, false);
     });
   });
 
@@ -1125,6 +1174,7 @@ function makeRawHeader(overrides: Partial<SessionHeader> = {}): SessionHeader {
     createdAt: 1,
     lastUsedAt: 1,
     name: 'Raw session',
+    titleIsManual: true,
     isFlagged: false,
     labels: [],
     isArchived: false,
