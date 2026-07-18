@@ -34,6 +34,7 @@ import type {
   SessionResumeAvailability,
 } from '../session-driver.js';
 import { CliGoalContinuation, type CliGoalTurnHost } from '../cli-goal-continuation.js';
+import type { ModelChoice } from '../connection-target.js';
 import {
   runMakaPiTui as runMakaPiTuiImpl,
   type MakaPiTuiGoalLifecycle,
@@ -2463,6 +2464,44 @@ describe('Maka Pi TUI runner', () => {
     await run;
   });
 
+  test('quit during a running turn closes the TUI instead of steering it', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SteeringTurnDriver();
+    const run = runMakaPiTui({
+      title: 'Maka', driver, cwd: '/repo', model: 'm', connectionSlug: 'c', permissionMode: 'bypass', terminal,
+    });
+
+    terminal.input('start the work');
+    terminal.input('\r');
+    await waitFor(() => terminal.progressStates.at(-1) === true);
+
+    terminal.input('quit');
+    terminal.input('\r');
+
+    await run;
+    assert.deepEqual(driver.steered, []);
+    assert.equal(driver.stopCalls, 1);
+  });
+
+  test('/quit during a running turn closes the TUI instead of steering it', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SteeringTurnDriver();
+    const run = runMakaPiTui({
+      title: 'Maka', driver, cwd: '/repo', model: 'm', connectionSlug: 'c', permissionMode: 'bypass', terminal,
+    });
+
+    terminal.input('start the work');
+    terminal.input('\r');
+    await waitFor(() => terminal.progressStates.at(-1) === true);
+
+    terminal.input('/quit');
+    terminal.input('\r');
+
+    await run;
+    assert.deepEqual(driver.steered, []);
+    assert.equal(driver.stopCalls, 1);
+  });
+
   test('Alt+Enter during a turn queues a followup and shows a pending Queued line', async () => {
     const terminal = new FakeTerminal();
     const driver = new SteeringTurnDriver();
@@ -3773,6 +3812,112 @@ describe('Maka Pi TUI runner', () => {
     await waitFor(() => plainTerminalOutput(terminal.output()).includes('previous answer'));
     const output = plainTerminalOutput(terminal.output());
     assert.equal(output.includes('Session: session-2'), false);
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
+  test('switching to a session on a different model updates the ctx total in the status line', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new ModelSwitchDriver();
+    const modelChoices: ModelChoice[] = [
+      {
+        connectionSlug: 'claude-subscription',
+        connectionName: 'Claude',
+        providerType: 'claude-subscription',
+        model: 'claude-sonnet-4-5',
+        isDefaultConnection: true,
+        contextWindow: 1_000,
+      },
+      {
+        connectionSlug: 'conn-b',
+        connectionName: 'B',
+        providerType: 'claude-subscription',
+        model: 'model-b',
+        isDefaultConnection: false,
+        contextWindow: 200_000,
+      },
+    ];
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      modelChoices,
+      modelContextWindow: 1_000,
+      terminal,
+    });
+
+    terminal.input('/session session-2');
+    terminal.input('\r');
+    await waitFor(() => terminal.output().includes('Resumed session "Existing chat"'));
+
+    terminal.input('go');
+    terminal.input('\r');
+    // contextWindow after the switch (200_000) minus contextRemaining (50_000)
+    // is 150_000 used, 75% — only correct if applySwitchResult re-resolved
+    // modelContextWindow for the switched-to connection+model instead of
+    // leaving the pre-switch session's 1_000 window in place.
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('ctx 150k/200k 75%'));
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
+  test('switching to a session whose model was curated out of modelChoices clears the stale ctx total', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new CuratedOutModelSwitchDriver();
+    const modelChoices: ModelChoice[] = [
+      {
+        connectionSlug: 'claude-subscription',
+        connectionName: 'Claude',
+        providerType: 'claude-subscription',
+        model: 'claude-sonnet-4-5',
+        isDefaultConnection: true,
+        contextWindow: 1_000,
+      },
+    ];
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      modelChoices,
+      modelContextWindow: 1_000,
+      terminal,
+    });
+
+    terminal.input('/session session-2');
+    terminal.input('\r');
+    await waitFor(() => terminal.output().includes('Resumed session "Existing chat"'));
+    // The switched-to session's model ("legacy-model") is not in modelChoices,
+    // so no exact contextWindowMatch exists for it.
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('legacy-model'));
+
+    terminal.input('go');
+    terminal.input('\r');
+    await waitFor(() => driver.prompts.length === 1);
+    // The driver's promptEvents completes near-instantly (no manual gating),
+    // so give the token_usage + complete events time to drain and render.
+    await delay(20);
+
+    // Bug under test: the pre-switch session's 1_000 window must not survive
+    // to render a (wrong) ctx total against the curated-out model's usage.
+    assert.doesNotMatch(plainTerminalOutput(terminal.output()), /ctx \d/);
 
     exitMaka(terminal);
     await Promise.race([
@@ -5814,6 +5959,209 @@ describe('Maka Pi TUI runner', () => {
     });
   });
 
+  test('a bare "quit" line exits Maka without sending a prompt', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('quit');
+    terminal.input('\r');
+
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close on a bare "quit" line');
+      }),
+    ]);
+
+    assert.equal(terminal.stopCalls, 1);
+    assert.deepEqual(driver.prompts, []);
+  });
+
+  test('a bare "exit" line exits Maka without sending a prompt', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('exit');
+    terminal.input('\r');
+
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close on a bare "exit" line');
+      }),
+    ]);
+
+    assert.equal(terminal.stopCalls, 1);
+    assert.deepEqual(driver.prompts, []);
+  });
+
+  test('"quit now" and "请 exit" are sent as ordinary prompts, not the exit word', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('quit now');
+    terminal.input('\r');
+    await waitFor(() => driver.prompts.length === 1);
+    assert.equal(driver.prompts[0], 'quit now');
+
+    terminal.input('请 exit');
+    terminal.input('\r');
+    await waitFor(() => driver.prompts.length === 2);
+    assert.equal(driver.prompts[1], '请 exit');
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
+  test('/quit exits Maka (alias of /exit)', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('/quit');
+    terminal.input('\r');
+
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close on /quit');
+      }),
+    ]);
+
+    assert.equal(terminal.stopCalls, 1);
+    assert.deepEqual(driver.prompts, []);
+  });
+
+  test('/quit is a hidden alias of /exit, not its own autocomplete entry', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'deepseek-v4-flash',
+      connectionSlug: 'deepseek',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('/');
+
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('/exit'));
+    const output = plainTerminalOutput(terminal.output());
+    assert.ok(output.includes('/exit'));
+    assert.ok(!output.includes('/quit'));
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
+  test('resumes a session at startup via resumeSessionId', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver([fakeSessionSummary('session-2', '/repo')]);
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+      resumeSessionId: 'session-2',
+    });
+
+    await waitFor(() => driver.sessionIds.length === 1);
+    await waitFor(() => terminal.output().includes('Resumed session "Existing chat"'));
+
+    assert.deepEqual(driver.sessionIds, ['session-2']);
+    assert.deepEqual(driver.prompts, []);
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
+  test('reports a resume failure and continues with the fresh session', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new FailingSwitchSessionDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+      resumeSessionId: 'missing-session',
+    });
+
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('Could not resume session missing-session'));
+    // The notice line-wraps at the terminal width, so normalize whitespace
+    // before matching instead of asserting on a single unbroken line.
+    const normalized = plainTerminalOutput(terminal.output()).replace(/\s+/g, ' ');
+    assert.match(
+      normalized,
+      /Could not resume session missing-session: session not found\. Starting fresh\./,
+    );
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
 });
 
 /** Count the standalone BEL bytes the attention layer wrote. */
@@ -6923,6 +7271,65 @@ class SlashCommandDriver implements MakaSessionDriver {
   }
   getSessionId(): string | null {
     return this.sessionId;
+  }
+}
+
+class FailingSwitchSessionDriver extends SlashCommandDriver {
+  async switchSession(_sessionId: string): Promise<MakaSessionSwitchResult> {
+    throw new Error('session not found');
+  }
+}
+
+// Switches onto a session on a different connection/model, then emits a
+// token_usage event on the next turn so the ctx statusline segment can be
+// checked against the *new* session's context window.
+class ModelSwitchDriver extends SlashCommandDriver {
+  constructor() {
+    super([{
+      ...fakeSessionSummary('session-2', '/repo'),
+      llmConnectionSlug: 'conn-b',
+      model: 'model-b',
+    }]);
+  }
+
+  override async *promptEvents(_prompt: string, turnId = 'turn-1'): AsyncIterable<SessionEvent> {
+    yield {
+      type: 'token_usage',
+      id: 'event-token-usage',
+      turnId,
+      ts: 1,
+      input: 150_000,
+      output: 0,
+      contextRemaining: 50_000,
+    };
+    yield { type: 'complete', id: 'event-complete', turnId, ts: 2, stopReason: 'end_turn' };
+  }
+}
+
+// Switches onto a session with the *same* connection but a model that has
+// been curated out of modelChoices (a legitimate state for old sessions —
+// see applySwitchResult). No exact contextWindowMatch exists, so the stale
+// window from the pre-switch session must be cleared, not kept.
+class CuratedOutModelSwitchDriver extends SlashCommandDriver {
+  constructor() {
+    super([{
+      ...fakeSessionSummary('session-2', '/repo'),
+      llmConnectionSlug: 'claude-subscription',
+      model: 'legacy-model',
+    }]);
+  }
+
+  override async *promptEvents(_prompt: string, turnId = 'turn-1'): AsyncIterable<SessionEvent> {
+    yield {
+      type: 'token_usage',
+      id: 'event-token-usage',
+      turnId,
+      ts: 1,
+      input: 150_000,
+      output: 0,
+      contextRemaining: 50_000,
+    };
+    yield { type: 'complete', id: 'event-complete', turnId, ts: 2, stopReason: 'end_turn' };
   }
 }
 

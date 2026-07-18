@@ -147,6 +147,14 @@ export interface MakaPiTuiInput {
    * unavailability and no auto-recap is ever scheduled.
    */
   recap?: SessionRecapGenerator;
+  /**
+   * When present, the runner switches onto this session as its first action
+   * (before entering the interactive loop), reusing the same `switchSession`
+   * path as `/session <id>`. A failed switch (missing session, stale cwd)
+   * surfaces as a transcript notice and the runner falls back to the fresh
+   * session the driver was created with.
+   */
+  resumeSessionId?: string;
 }
 
 export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
@@ -640,6 +648,10 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       requestRender();
       return;
     }
+    if (isExitPrompt(prompt)) {
+      beginGracefulClose();
+      return;
+    }
     // Captured BEFORE lastActivityAt is refreshed, so the idle gap measures up
     // to (not including) this very submission.
     const idleMs = Date.now() - lastActivityAt;
@@ -845,6 +857,13 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
 
   editor.onSubmit = (prompt) => {
     if (turnRunning) {
+      // A quit/exit form typed while a turn is running must close the TUI, not
+      // steer it into the model as prompt text (review finding on turnRunning
+      // input routing): check it before handing off to steering.
+      if (isExitPrompt(prompt)) {
+        beginGracefulClose();
+        return;
+      }
       steerRunningTurn(prompt);
       return;
     }
@@ -1059,12 +1078,32 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   // runner state (model/connection/thinking/transcript/scroll).
   const applySwitchResult = async ({ summary, messages }: MakaSessionSwitchResult): Promise<void> => {
     cwd = summary.cwd ?? cwd;
+    const previousModel = model;
     model = summary.model;
     const previousConnectionSlug = connectionSlug;
     connectionSlug = summary.llmConnectionSlug;
-    providerType = input.modelChoices?.find((choice) => (
+    const matchingChoice = input.modelChoices?.find((choice) => (
       choice.connectionSlug === summary.llmConnectionSlug
-    ))?.providerType ?? (previousConnectionSlug === summary.llmConnectionSlug ? providerType : undefined);
+    ));
+    providerType = matchingChoice?.providerType
+      ?? (previousConnectionSlug === summary.llmConnectionSlug ? providerType : undefined);
+    // Statusline ctx total for the now-active session (review finding: a
+    // switch/rewind onto a different connection or model left the previous
+    // session's window in place). Mirrors setModel/setModelChoice's own
+    // lookup above. An exact match (connection + model) updates the window;
+    // no match with the target actually changed means the resumed model was
+    // curated out of modelChoices (a legitimate state for old sessions) —
+    // clear the window rather than keep showing the previous session's ctx
+    // total under a different model. No match but the target didn't change
+    // (e.g. rewind within the same session) leaves the window untouched.
+    const contextWindowMatch = input.modelChoices?.find((choice) => (
+      choice.connectionSlug === summary.llmConnectionSlug && choice.model === summary.model
+    ));
+    if (contextWindowMatch) {
+      modelContextWindow = contextWindowMatch.contextWindow;
+    } else if (previousConnectionSlug !== summary.llmConnectionSlug || previousModel !== summary.model) {
+      modelContextWindow = undefined;
+    }
     permissionMode = summary.permissionMode;
     thinkingLevel = summary.thinkingLevel;
     thinkingLevels = providerType ? thinkingVariantsForModel(providerType, summary.model) : [];
@@ -1545,7 +1584,12 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     // Derive the command list from the registry so /help never drifts from the
     // real commands. Keybindings are not commands, so they are listed by hand.
     const commands = slashCommands
-      .map((command) => `  /${command.name} — ${command.description}`)
+      .map((command) => {
+        const aliasSuffix = command.aliases && command.aliases.length > 0
+          ? ` (${command.aliases.map((alias) => `/${alias}`).join(', ')})`
+          : '';
+        return `  /${command.name}${aliasSuffix} — ${command.description}`;
+      })
       .join('\n');
     const keybindings = [
       '  Ctrl+O — expand or collapse all tool output',
@@ -1698,6 +1742,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     {
       name: 'exit',
       description: 'Exit Maka',
+      aliases: ['quit'],
       run: () => {
         beginGracefulClose();
       },
@@ -1892,7 +1937,10 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
 
   const handleSlashCommand = (prompt: string): boolean => {
     const parts = prompt.trim().split(/\s+/);
-    const command = slashCommands.find((candidate) => `/${candidate.name}` === parts[0]);
+    const command = slashCommands.find((candidate) => (
+      `/${candidate.name}` === parts[0]
+      || candidate.aliases?.some((alias) => `/${alias}` === parts[0])
+    ));
     if (!command) return false;
     command.run(parts);
     return true;
@@ -2098,6 +2146,21 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     beginClose(error instanceof Error ? error : new Error(String(error)));
   }
 
+  if (input.resumeSessionId) {
+    void runControl(async () => {
+      try {
+        await switchSession(input.resumeSessionId!);
+      } catch (error) {
+        state.entries.push({
+          kind: 'notice',
+          level: 'error',
+          text: `Could not resume session ${input.resumeSessionId}: ${error instanceof Error ? error.message : String(error)}. Starting fresh.`,
+        });
+        requestRender();
+      }
+    });
+  }
+
   return closedPromise;
 }
 
@@ -2112,6 +2175,15 @@ const EDITOR_AUTOCOMPLETE_MAX_VISIBLE = 13;
 // sessions apart in the picker without showing the full unreadable uuid.
 function shortSessionId(id: string): string {
   return id.slice(0, 8);
+}
+
+// Matches only the four exact "close the TUI" spellings — bare `quit`/`exit`
+// and their slash forms — never a prefix or a phrase merely containing one, so
+// it can gate both the idle submit path and mid-turn input without swallowing
+// an in-turn steering message that happens to mention "quit".
+function isExitPrompt(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  return trimmed === 'quit' || trimmed === 'exit' || trimmed === '/quit' || trimmed === '/exit';
 }
 
 // Two Escapes this close together read as one deliberate "stop the turn".
