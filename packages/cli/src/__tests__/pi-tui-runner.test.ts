@@ -581,6 +581,478 @@ describe('Maka Pi TUI runner', () => {
     ]);
   });
 
+  test('onboarding wizard filters the provider list as you type in the search field', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: '',
+      connectionSlug: '',
+      permissionMode: 'bypass',
+      terminal,
+      firstRun: true,
+      onboarding: { setup: async () => ({}) },
+    });
+
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+    const before = plainTerminalOutput(terminal.screenOutput());
+    assert.ok(before.includes('Anthropic'));
+    assert.ok(before.includes('DeepSeek'));
+
+    // Typing in the wizard's search field filters the provider list live: the
+    // unmatched providers leave the list while the match stays.
+    terminal.input('anth');
+    await waitFor(() => {
+      const out = plainTerminalOutput(terminal.screenOutput());
+      return out.includes('Anthropic') && !out.includes('DeepSeek');
+    });
+
+    process.emit('SIGTERM');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('TUI did not close after SIGTERM'); }),
+    ]);
+  });
+
+  test('onboarding wizard keeps verifying/failure status beside the input, out of the transcript', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const setupCalls: Array<{ apiKey: string }> = [];
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'bypass',
+      terminal,
+      onboarding: {
+        setup: async (req) => {
+          setupCalls.push({ apiKey: req.apiKey });
+          return setupCalls.length === 1 ? { testError: 'HTTP 401 Unauthorized' } : {};
+        },
+      },
+    });
+
+    await delay(20);
+    terminal.input('/setup');
+    terminal.input('\r');
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+    terminal.input('\r'); // pick the highlighted provider -> key phase
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // A failing probe surfaces the error beside the key field (wizard overlay).
+    terminal.input('sk-bad');
+    terminal.input('\r');
+    await waitFor(() => setupCalls.length === 1);
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), '验证失败') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // A succeeding retry closes the wizard. The in-flight failure status lived
+    // only in the overlay, so once it closes it leaves no residue in the
+    // transcript — only the completed-configuration event remains on screen.
+    terminal.input('sk-good');
+    terminal.input('\r');
+    await waitFor(() => setupCalls.length === 2);
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), '已配置') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    assert.doesNotMatch(plainTerminalOutput(terminal.screenOutput()), /验证失败/);
+
+    process.emit('SIGTERM');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('TUI did not close after SIGTERM'); }),
+    ]);
+  });
+
+  test('onboarding wizard key Esc returns to the provider search', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'bypass',
+      terminal,
+      onboarding: { setup: async () => ({}) },
+    });
+
+    await delay(20);
+    terminal.input('/setup');
+    terminal.input('\r');
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+    terminal.input('\r'); // pick the highlighted provider -> key phase
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // Esc from the key field returns to the search phase: the step marker is
+    // back to 1/2 and the provider list is visible again.
+    terminal.input('\x1b');
+    await waitFor(() => {
+      const out = plainTerminalOutput(terminal.screenOutput());
+      return out.includes('1/2') && out.includes('Anthropic');
+    });
+
+    process.emit('SIGTERM');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('TUI did not close after SIGTERM'); }),
+    ]);
+  });
+
+  test('first-run wizard never reaches an agent turn after a slash command escapes the key field', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    let preparePromptCalls = 0;
+    driver.preparePrompt = async () => {
+      preparePromptCalls += 1;
+      throw new Error('first-run onboarding: no agent turn before a connection exists');
+    };
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: '',
+      connectionSlug: '',
+      permissionMode: 'bypass',
+      terminal,
+      firstRun: true,
+      onboarding: { setup: async () => ({}) },
+    });
+
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+    terminal.input('\r'); // pick provider -> key phase
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // A slash command typed in the key field escapes the wizard (designed, so
+    // /exit still works). But after it closes, first-run must not hand control
+    // to a connection-less driver: any later submit reopens the wizard instead
+    // of opening an agent turn.
+    terminal.input('/help');
+    terminal.input('\r');
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Keybindings') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    terminal.input('hello');
+    terminal.input('\r');
+    await delay(40);
+    assert.equal(preparePromptCalls, 0);
+    // The wizard is back open as the only first-run surface.
+    assert.ok(plainTerminalOutput(terminal.screenOutput()).includes('Set Up Provider'));
+
+    process.emit('SIGTERM');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('TUI did not close after SIGTERM'); }),
+    ]);
+  });
+
+  test('first-run wizard reopens on Alt+Enter after a slash escape (no agent turn)', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    let preparePromptCalls = 0;
+    driver.preparePrompt = async () => {
+      preparePromptCalls += 1;
+      throw new Error('first-run onboarding: no agent turn before a connection exists');
+    };
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: '',
+      connectionSlug: '',
+      permissionMode: 'bypass',
+      terminal,
+      firstRun: true,
+      onboarding: { setup: async () => ({}) },
+    });
+
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+    terminal.input('\r'); // pick provider -> key phase
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // Slash escapes and closes the wizard; Alt+Enter must go through the same
+    // submitPrompt choke point as Enter and reopen the wizard, not hand the
+    // prompt to a connection-less driver.
+    terminal.input('/help');
+    terminal.input('\r');
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Keybindings') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    terminal.input('hello');
+    terminal.input('\x1b\r'); // Alt+Enter
+    await delay(40);
+    assert.equal(preparePromptCalls, 0);
+    assert.ok(plainTerminalOutput(terminal.screenOutput()).includes('Set Up Provider'));
+
+    process.emit('SIGTERM');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('TUI did not close after SIGTERM'); }),
+    ]);
+  });
+
+  test('first-run /exit in the main editor after a slash escape still exits the TUI', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: '',
+      connectionSlug: '',
+      permissionMode: 'bypass',
+      terminal,
+      firstRun: true,
+      onboarding: { setup: async () => ({}) },
+    });
+
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+    terminal.input('\r'); // pick provider -> key phase
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // Slash escape in the key field closes the wizard and shows help.
+    terminal.input('/help');
+    terminal.input('\r');
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Keybindings') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // Now the main editor is active. /exit must reach the command layer, not
+    // be swallowed by the first-run guard that would reopen the wizard.
+    terminal.input('/exit');
+    terminal.input('\r');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('/exit did not close the first-run TUI'); }),
+    ]);
+  });
+
+  test('onboarding wizard cancels on Ctrl+C as well as Esc (first-run closes the TUI)', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: '',
+      connectionSlug: '',
+      permissionMode: 'bypass',
+      terminal,
+      firstRun: true,
+      onboarding: { setup: async () => ({}) },
+    });
+
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // The overlay cancel contract is Esc AND Ctrl+C (pi-tui `tui.select.cancel`);
+    // in first-run, Ctrl+C must close the TUI like Esc does, not be swallowed.
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('Ctrl+C did not close the first-run wizard'); }),
+    ]);
+  });
+
+  test('onboarding wizard key-phase Ctrl+C cancels while Esc returns to search', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: '',
+      connectionSlug: '',
+      permissionMode: 'bypass',
+      terminal,
+      firstRun: true,
+      onboarding: { setup: async () => ({}) },
+    });
+
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+      } catch {
+        return false;
+      }
+    });
+    terminal.input('\r'); // pick provider -> key phase
+    await waitFor(() => {
+      try {
+        return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null;
+      } catch {
+        return false;
+      }
+    });
+
+    // In the key phase, Ctrl+C cancels the whole wizard (first-run closes the
+    // TUI), matching the overlay cancel contract; Esc only returns to search.
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(500).then(() => { throw new Error('Ctrl+C did not close the first-run wizard from the key phase'); }),
+    ]);
+  });
+
+  test('onboarding wizard ignores a setup result from an abandoned attempt', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const setupCalls: Array<{ apiKey: string }> = [];
+    let resolveFirst!: (value: { testError?: string }) => void;
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'bypass',
+      terminal,
+      onboarding: {
+        setup: (req) => {
+          setupCalls.push({ apiKey: req.apiKey });
+          // First attempt stays in flight (deferred); the user abandons it.
+          return setupCalls.length === 1
+            ? new Promise((r) => { resolveFirst = r; })
+            : Promise.resolve({});
+        },
+      },
+    });
+
+    await delay(20);
+    terminal.input('/setup');
+    terminal.input('\r');
+    await waitFor(() => { try { return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null; } catch { return false; } });
+    terminal.input('\r'); // pick provider A -> key phase
+    await waitFor(() => { try { return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null; } catch { return false; } });
+
+    terminal.input('sk-a');
+    terminal.input('\r'); // submit A — probe deferred, wizard shows verifying
+    await waitFor(() => setupCalls.length === 1);
+    await waitFor(() => { try { return latestPlainLineContaining(terminal.writes.join(''), '验证') !== null; } catch { return false; } });
+
+    // Abandon A: Esc back to search, move to the second provider, pick it, and
+    // start typing its key (do not submit).
+    terminal.input('\x1b');
+    await waitFor(() => { try { return latestPlainLineContaining(terminal.writes.join(''), '1/2') !== null; } catch { return false; } });
+    terminal.input('\x1b[B'); // down to the second provider
+    terminal.input('\r');
+    await waitFor(() => { try { return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null; } catch { return false; } });
+    terminal.input('sk-b');
+    await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('sk-b'));
+
+    // A's probe now resolves with a failure. It must not clobber attempt B:
+    // no failure status line, and the key being typed for B survives.
+    resolveFirst({ testError: 'HTTP 401 Unauthorized' });
+    await delay(40);
+
+    const out = plainTerminalOutput(terminal.screenOutput());
+    assert.doesNotMatch(out, /验证失败/);
+    assert.ok(out.includes('sk-b'));
+
+    process.emit('SIGTERM');
+    await Promise.race([run, delay(500).then(() => { throw new Error('TUI did not close after SIGTERM'); })]);
+  });
+
   test('allows a pending permission request from the terminal', async () => {
     const terminal = new FakeTerminal();
     const driver = new PermissionPromptDriver();
