@@ -122,7 +122,7 @@ export interface MakaSessionDriver {
   setModel(model: string, connectionSlug?: string): Promise<void>;
   setThinkingLevel(level: ThinkingLevel | undefined): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
-  renameSession(name: string): Promise<void>;
+  renameSession(name: string): Promise<string | void>;
   moveSession?(cwd: string): Promise<MakaSessionMoveResult>;
   switchSession(sessionId: string): Promise<MakaSessionSwitchResult>;
   /** Every prompted turn the user can rewind to, newest first. */
@@ -333,9 +333,9 @@ class RuntimeMakaSessionDriver implements MakaSessionDriver {
     this.permissionMode = mode;
   }
 
-  async renameSession(name: string): Promise<void> {
+  async renameSession(name: string): Promise<string> {
     if (!this.sessionId) throw new Error('Cannot rename before a session starts.');
-    await this.input.runtime.updateSession(this.sessionId, { name });
+    return (await this.input.runtime.updateSession(this.sessionId, { name })).name;
   }
 
   async moveSession(rawCwd: string): Promise<MakaSessionMoveResult> {

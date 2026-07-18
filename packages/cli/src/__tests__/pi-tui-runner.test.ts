@@ -3683,6 +3683,25 @@ describe('Maka Pi TUI runner', () => {
     ]);
   });
 
+  test('uses the canonical session name returned by /rename', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new CanonicalRenameDriver();
+    const run = runMakaPiTui({
+      title: 'Maka', driver, cwd: '/repo', model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription', permissionMode: 'ask', terminal,
+    });
+
+    terminal.input('/rename Raw\u200B title');
+    terminal.input('\r');
+
+    await waitFor(() => driver.renames.length === 1);
+    await waitFor(() => terminal.titles.includes('Raw title (Maka)'));
+    assert.equal(plainTerminalOutput(terminal.output()).includes('Session renamed to "Raw title"'), true);
+
+    exitMaka(terminal);
+    await run;
+  });
+
   test('handles /move without sending a prompt and warns about dirty old cwd', async () => {
     const terminal = new FakeTerminal();
     const driver = new SlashCommandDriver();
@@ -3825,6 +3844,35 @@ describe('Maka Pi TUI runner', () => {
     driver.releaseList();
     await delay(0);
     assert.equal(terminal.titles.some((title) => title.includes('Old title')), false);
+
+    exitMaka(terminal);
+    await run;
+  });
+
+  test('ignores a delayed title refresh after a manual rename', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new DeferredListSessionsDriver([
+      fakeSessionSummary('session-1', '/repo', 'Stale generated title'),
+    ]);
+    let notifyTitleChanged: ((sessionId: string) => void) | undefined;
+    const run = runMakaPiTui({
+      title: 'Maka', driver, cwd: '/repo', model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription', permissionMode: 'ask', terminal,
+      subscribeSessionTitleChanges: (listener) => {
+        notifyTitleChanged = listener;
+        return () => {};
+      },
+    });
+
+    notifyTitleChanged?.('session-1');
+    await waitFor(() => driver.listCalls === 1);
+    terminal.input('/rename Manual title');
+    terminal.input('\r');
+    await waitFor(() => terminal.titles.includes('Manual title (Maka)'));
+
+    driver.releaseList();
+    await delay(0);
+    assert.equal(terminal.titles.at(-1), 'Manual title (Maka)');
 
     exitMaka(terminal);
     await run;
@@ -7403,8 +7451,9 @@ class SlashCommandDriver implements MakaSessionDriver {
     this.models.push(model);
     this.modelConnections.push(connectionSlug);
   }
-  async renameSession(name: string): Promise<void> {
+  async renameSession(name: string): Promise<string> {
     this.renames.push(name);
+    return name;
   }
   async moveSession(cwd: string): Promise<MakaSessionMoveResult> {
     this.moves.push(cwd);
@@ -7813,6 +7862,13 @@ class DeferredListSessionsDriver extends SlashCommandDriver {
   releaseList(): void {
     this.resolveList?.();
     this.resolveList = null;
+  }
+}
+
+class CanonicalRenameDriver extends SlashCommandDriver {
+  override async renameSession(name: string): Promise<string> {
+    await super.renameSession(name);
+    return 'Raw title';
   }
 }
 

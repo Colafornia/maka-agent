@@ -212,6 +212,7 @@ describe('Maka session driver', () => {
 
   test('renames the active session through runtime updateSession', async () => {
     const runtime = new RecordingRuntime();
+    runtime.updatedSessionName = 'Canonical title';
     const driver = createMakaSessionDriver({
       runtime,
       cwd: '/repo',
@@ -220,8 +221,9 @@ describe('Maka session driver', () => {
     });
 
     await collectPrompt(driver, 'run tests');
-    await driver.renameSession('watcher 根目录事件风暴修复');
+    const renamed = await driver.renameSession('watcher 根目录事件风暴修复');
 
+    assert.equal(renamed, 'Canonical title');
     assert.deepEqual(runtime.sessionUpdates, [{
       sessionId: 'session-1',
       patch: { name: 'watcher 根目录事件风暴修复' },
@@ -879,6 +881,7 @@ class RecordingRuntime {
   readonly branchedBefore: Array<{ sessionId: string; sourceTurnId: string }> = [];
   readonly sessionMessages = new Map<string, StoredMessage[]>();
   sessionSummaries: SessionSummary[] = [];
+  updatedSessionName = 'New Chat';
 
   async createSession(input: CreateSessionInput): Promise<SessionSummary> {
     this.created.push(input);
@@ -991,7 +994,7 @@ class RecordingRuntime {
       id: sessionId,
       cwd: patch.cwd ?? '/repo',
       ...(Object.hasOwn(patch, 'pendingCwdReminder') ? { pendingCwdReminder: patch.pendingCwdReminder } : {}),
-      name: 'New Chat',
+      name: this.updatedSessionName,
       isFlagged: false,
       isArchived: false,
       labels: [],

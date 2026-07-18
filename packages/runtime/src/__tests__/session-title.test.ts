@@ -58,4 +58,20 @@ describe('session title helper', () => {
     assert.equal(await generateSessionTitle({ model, sourceText: 'hello', generateText: async () => ({ text: '<think>x</think>', finishReason: 'stop' }) }), undefined);
     assert.equal(await generateSessionTitle({ model, sourceText: 'hello', generateText: async () => { throw new Error('offline'); } }), undefined);
   });
+
+  test('aborts title generation when the provider exceeds its deadline', { timeout: 100 }, async () => {
+    let signal: AbortSignal | undefined;
+    const input = {
+      model: {} as never,
+      sourceText: 'hello',
+      timeoutMs: 10,
+      generateText: (options: Record<string, unknown>) => new Promise<never>((_resolve, reject) => {
+        signal = options.abortSignal as AbortSignal;
+        signal?.addEventListener('abort', () => reject(signal?.reason), { once: true });
+      }),
+    };
+
+    assert.equal(await generateSessionTitle(input), undefined);
+    assert.equal(signal?.aborted, true);
+  });
 });

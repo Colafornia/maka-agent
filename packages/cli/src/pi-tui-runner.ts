@@ -259,15 +259,20 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       ? { longTurnThresholdMs: input.attentionLongTurnThresholdMs }
       : {}),
   });
-  const setSessionTitle = (title: string) => attention.setBaseTitle(`${title} (${input.title})`);
+  let sessionTitleVersion = 0;
+  const setSessionTitle = (title: string) => {
+    sessionTitleVersion += 1;
+    attention.setBaseTitle(`${title} (${input.title})`);
+  };
 
   const requestRender = () => {
     transcript.invalidate();
     tui.requestRender();
   };
   const unsubscribeSessionTitleChanges = input.subscribeSessionTitleChanges?.((sessionId) => {
+    const refreshVersion = ++sessionTitleVersion;
     void input.driver.listSessions().then((sessions) => {
-      if (closed || input.driver.getSessionId() !== sessionId) return;
+      if (closed || input.driver.getSessionId() !== sessionId || sessionTitleVersion !== refreshVersion) return;
       const session = sessions.find((candidate) => candidate.id === sessionId);
       if (!session) return;
       setSessionTitle(session.name);
@@ -1977,12 +1982,12 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           return;
         }
         void runControl(async () => {
-          await input.driver.renameSession(name);
-          setSessionTitle(name);
+          const renamedName = await input.driver.renameSession(name) ?? name;
+          setSessionTitle(renamedName);
           state.entries.push({
             kind: 'notice',
             level: 'info',
-            text: `Session renamed to "${name}"`,
+            text: `Session renamed to "${renamedName}"`,
           });
           requestRender();
         });

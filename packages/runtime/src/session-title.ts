@@ -3,6 +3,7 @@ import { normalizeUserSessionName } from '@maka/core';
 
 const MAX_SOURCE_BYTES = 8 * 1024;
 const MAX_FALLBACK_CODE_POINTS = 42;
+const TITLE_GENERATION_TIMEOUT_MS = 15_000;
 
 export function sessionTitleSource(input: { text: string; displayText?: string }): string {
   const raw = input.displayText ?? input.text;
@@ -38,16 +39,27 @@ export async function generateSessionTitle(input: {
   sourceText: string;
   providerOptions?: unknown;
   generateText?: GenerateText;
+  timeoutMs?: number;
 }): Promise<string | undefined> {
   if (!input.sourceText.trim()) return undefined;
   try {
     const generateText: GenerateText = input.generateText ?? (async (options) => aiGenerateText(options as Parameters<typeof aiGenerateText>[0]));
-    const result = await generateText({
-      model: input.model,
-      prompt: `Create a descriptive 5–10 word title for the user message below. Use the user's language; for Chinese and similar languages, use an equivalently brief natural title. Output only the title.\n\n${input.sourceText}`,
-      ...(input.providerOptions === undefined ? {} : { providerOptions: input.providerOptions }),
-      maxOutputTokens: 1024,
+    const abortSignal = AbortSignal.timeout(input.timeoutMs ?? TITLE_GENERATION_TIMEOUT_MS);
+    let onAbort!: () => void;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(abortSignal.reason);
+      abortSignal.addEventListener('abort', onAbort, { once: true });
     });
+    const result = await Promise.race([
+      generateText({
+        model: input.model,
+        prompt: `Create a descriptive 5–10 word title for the user message below. Use the user's language; for Chinese and similar languages, use an equivalently brief natural title. Output only the title.\n\n${input.sourceText}`,
+        ...(input.providerOptions === undefined ? {} : { providerOptions: input.providerOptions }),
+        maxOutputTokens: 1024,
+        abortSignal,
+      }),
+      timeout,
+    ]).finally(() => abortSignal.removeEventListener('abort', onAbort));
     if (result.finishReason === 'length') return undefined;
     return cleanGeneratedSessionTitle(result.text);
   } catch {
