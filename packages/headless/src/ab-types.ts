@@ -33,6 +33,9 @@ export interface RunAbComparisonInput {
   roundIdPrefix?: string;
   budgetMs?: number;
   nonInferiorityMargin?: number;
+  /** Events already present when this invocation began. They remain
+   * in the summary but must not re-trigger live stop guards on explicit resume. */
+  preexistingEventIds?: ReadonlySet<string>;
   runArm: AbArmRunner;
 }
 
