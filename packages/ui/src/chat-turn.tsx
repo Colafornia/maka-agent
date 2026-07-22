@@ -1,21 +1,23 @@
-import { Fragment, memo, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button as BaseButton } from '@base-ui/react/button';
 import { useMountedRef } from './use-mounted-ref.js';
-import { AlertOctagon, Ban, Brain, Check, ChevronRight, Copy, GitBranch, Info, Loader2, Pencil, RefreshCcw, Timer } from './icons.js';
+import { AlertOctagon, Ban, Brain, Check, ChevronRight, Copy, Cpu, GitBranch, Info, Loader2, Pencil, RefreshCcw, Timer } from './icons.js';
 import { type ClipboardCopyPhase, useClipboardCopyFeedback } from './clipboard-feedback.js';
 import { Markdown } from './markdown.js';
 import { formatAbsoluteTimestamp, formatClockTime, turnAbortMarkerLabel } from './chat-display-helpers.js';
 import { prepareSmoothStreamText, useSmoothStreamContent } from './smooth-stream.js';
 import { tokenizeFade, useStreamFade, type StreamFade } from './stream-fade.js';
-import { Button as UiButton, DialogContent, DialogRoot } from './ui.js';
+import { Button as UiButton, cn, DialogContent, DialogRoot } from './ui.js';
 import type { AttachmentRef, QuoteRef } from '@maka/core';
 import type { TurnTimelineItem, TurnViewModel } from './materialize.js';
+import { foldTimeline, type FoldedTimelineChild } from './timeline-fold.js';
 import { AttachmentFileCard } from './attachment-file-card.js';
 import { QuoteRefChip } from './quote-ref-chip.js';
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from './primitives/collapsible.js';
 import { Bubble, Marker, markerVariants, Message, TextShimmer } from './primitives/chat.js';
 import { Tooltip, TooltipTrigger, TooltipContent } from './primitives/tooltip.js';
-import { ToolTrow } from './tool-activity.js';
+import { SETTLE_FADE, ToolTrow, useToolDisclosure } from './tool-activity.js';
+import { isProcessingRunning, processingNeedsAttention, summarizeProcessing } from './tool-activity/trow-summary.js';
 import { useUiLocale } from './locale-context.js';
 import { getConversationCopy } from './conversation-copy.js';
 
@@ -377,6 +379,10 @@ export const TurnView = memo(function TurnView(props: {
         ? item.live === true
         : item.items.some((tool) => tool.status === 'pending' || tool.status === 'running' || tool.status === 'waiting_permission'),
   );
+  // #1307: the collapsed "Processing" fold is derived at render time from the
+  // flat timeline. Settled turn identities are stable (memoized projections),
+  // so this only recomputes for the turn whose timeline actually changed.
+  const foldedTimeline = useMemo(() => foldTimeline(turn.timeline), [turn.timeline]);
   return (
     <section
       className="maka-turn"
@@ -520,14 +526,20 @@ export const TurnView = memo(function TurnView(props: {
             )}
             {/* The turn timeline is the rendering source of truth
                 (materialize.ts): each step's 深度思考 disclosure, answer bubble,
-                and Codex-style tool trow in the order the model produced them. */}
-            {turn.timeline.map((item, index) => (
-              <TurnTimelineEntry
-                key={timelineEntryKey(item, index)}
-                item={item}
-                onStreamingSettled={props.liveStreaming?.onStreamingSettled}
-              />
-            ))}
+                and Codex-style tool trow in the order the model produced them.
+                #1307: runs of reasoning + tools between answer texts render
+                through the derived fold as collapsed Processing blocks. */}
+            {foldedTimeline.map((item, index) =>
+              item.kind === 'processing' ? (
+                <ProcessingBlock key={`processing-${item.id}`} entries={item.children} />
+              ) : (
+                <TurnTimelineEntry
+                  key={timelineEntryKey(item, index)}
+                  item={item}
+                  onStreamingSettled={props.liveStreaming?.onStreamingSettled}
+                />
+              ),
+            )}
             {props.liveStreaming && (
               <>
                 {props.liveStreaming.processingIndicator && !hasLiveTimelineContent && <ModelProcessingIndicator />}
@@ -899,6 +911,74 @@ function TurnTimelineEntry(props: {
     );
   }
   return <MessageBody role="assistant" text={item.text} ts={item.ts} />;
+}
+
+/**
+ * "Processing" — a folded run of the model's reasoning + tool activity between
+ * two answer texts (#1307; the fold is derived at render time by
+ * `foldTimeline`, which only folds runs containing tool activity — a
+ * pure-thinking run renders as the bare 深度思考 disclosure). Collapsed by
+ * default (no defaultOpen — same disclosure-collapsible-contract as 深度思考 /
+ * the tool trow): the summary line shows the current activity while running and
+ * freezes to the settled tool roll-up (tool counts + 「N 个失败」 in
+ * destructive; folded reasoning is not counted) once the turn ends. A
+ * `waiting_permission` prompt inside forces the block open (trowNeedsAttention);
+ * an errored tool stays collapsed with its failure count on the summary line.
+ * The expanded panel replays the full timeline — the SAME 深度思考 disclosures
+ * and tool trows, just nested one indent in — so nothing is lost, only folded.
+ */
+function ProcessingBlock(props: { entries: FoldedTimelineChild[] }) {
+  const locale = useUiLocale();
+  const { entries } = props;
+  const running = isProcessingRunning(entries);
+  const attention = processingNeedsAttention(entries);
+  // Reuse the tool disclosure state machine: ordinary work summarized, a
+  // permission prompt opens, an explicit toggle sticks across status changes.
+  const disclosure = useToolDisclosure({ kind: 'tool', summary: '', needsAttention: attention });
+  // #646 settle seam: play the one-shot landing fade only if this block was
+  // seen running here (not a replayed transcript), matching the tool trow.
+  const everRunningRef = useRef(false);
+  if (running) everRunningRef.current = true;
+  const settled = !running;
+  const settling = settled && everRunningRef.current;
+  const hasError = entries.some((entry) => entry.kind === 'tools' && entry.items.some((item) => item.status === 'errored'));
+  const summary = summarizeProcessing(entries, { live: running, locale });
+  return (
+    <Collapsible
+      className="flex flex-col"
+      data-processing="block"
+      data-settled={settled ? 'true' : undefined}
+      open={disclosure.open}
+      onOpenChange={disclosure.setOpen}
+    >
+      {/* Same row language as the tool trow / 深度思考: [16px icon] + [label] +
+          hover/open chevron, one tier — hierarchy carried by color, not size. */}
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 py-0.5 text-left">
+        <Cpu
+          size={16}
+          aria-hidden="true"
+          className={cn('shrink-0', hasError ? 'text-[color:var(--destructive)]' : 'text-[color:var(--muted-foreground)]')}
+        />
+        {running ? (
+          <TextShimmer active delayed className="min-w-0 truncate text-[length:var(--font-size-base)]">{summary}</TextShimmer>
+        ) : (
+          <span className={cn('min-w-0 truncate text-[length:var(--font-size-base)]', hasError ? 'text-[color:var(--destructive)]' : 'text-[color:var(--muted-foreground)]', settling && SETTLE_FADE)}>{summary}</span>
+        )}
+        <ChevronRight
+          size={14}
+          aria-hidden="true"
+          className="shrink-0 text-[color:var(--muted-foreground)] opacity-0 [transition:transform_var(--duration-quick)_var(--ease-out-strong),opacity_var(--duration-quick)_var(--ease-out-strong)] group-hover:opacity-100 group-data-[panel-open]:rotate-90 group-data-[panel-open]:opacity-100"
+        />
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <div className="mt-0.5 ml-2 flex flex-col gap-0.5 border-l border-[var(--border)] pl-2.5">
+          {entries.map((entry, index) => (
+            <TurnTimelineEntry key={timelineEntryKey(entry, index)} item={entry} />
+          ))}
+        </div>
+      </CollapsiblePanel>
+    </Collapsible>
+  );
 }
 
 /**

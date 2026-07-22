@@ -74,8 +74,15 @@ describe('single live-turn handoff', () => {
       }],
     });
 
-    assert.ok(markup.indexOf('先检查') < markup.indexOf('data-trow="group"'));
-    assert.match(markup, /最终答案/);
+    // #1307: the render-layer fold (foldTimeline) keeps answer text as the
+    // grouping boundary and leaves a pure-thinking run bare, so the reasoning
+    // renders as the 深度思考 disclosure above the answer while the tool folds
+    // into one collapsed "Processing" block below it (its body is not in the
+    // static markup; the summary line carries the tool roll-up).
+    assert.equal((markup.match(/data-processing="block"/g) ?? []).length, 1);
+    assert.ok(markup.indexOf('深度思考') >= 0);
+    assert.ok(markup.indexOf('深度思考') < markup.indexOf('最终答案'));
+    assert.ok(markup.indexOf('最终答案') < markup.indexOf('运行 1 条命令'));
     assert.equal((markup.match(/data-turn-id=/g) ?? []).length, 1);
   });
 

@@ -225,6 +225,11 @@ function mergeLiveOverPersisted(persisted: ToolActivityItem, live: ToolActivityI
  *   step's wall-clock for hover meta.
  * - `tools`: one contiguous group of tool activity, rendered as a single
  *   Codex-style trow. Adjacent groups are pre-merged.
+ *
+ * The model stays FLAT: the collapsed "Processing" fold (#1307) is a render
+ * concern applied by `foldTimeline` (timeline-fold.ts) at the component layer,
+ * so timeline-rewriting passes (overlayLiveTurn, projectTurnTools, shell-run
+ * folding) never have to maintain a nesting invariant.
  */
 export type TurnTimelineItem =
   | { kind: 'thinking'; text: string; messageId: string; live?: boolean; truncated?: boolean }

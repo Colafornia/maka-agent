@@ -13,9 +13,28 @@
 
 import type { ToolActivityKind, UiLocale } from '@maka/core';
 import type { ToolActivityItem } from '../materialize.js';
+import type { FoldedTimelineChild } from '../timeline-fold.js';
+import { loadToolDisplayName } from '../tool-format.js';
 import { getToolActivityCopy } from './copy.js';
+import { formatUserVisibleToolText } from './preview-utils.js';
 
 export type TrowActivityKind = ToolActivityKind;
+
+// Connector-tool naming lives in this leaf module (rather than
+// presentation.ts, which imports us) so the live processing summary below can
+// reuse the same localized fallback without an import cycle. presentation.ts
+// re-exports both for its existing consumers.
+const CONNECTOR_TOOL_NAMES: ReadonlySet<string> = new Set(['load_tools', 'load_tool']);
+
+export function isConnectorTool(name: string): boolean {
+  return CONNECTOR_TOOL_NAMES.has(name);
+}
+
+export function resolveToolDisplayName(item: ToolActivityItem, locale: UiLocale): string {
+  if (item.displayName) return item.displayName;
+  if (isConnectorTool(item.toolName)) return loadToolDisplayName(locale);
+  return item.toolName;
+}
 
 /**
  * Prefer a declared semantic category. Legacy rows fall back to the canonical
@@ -124,4 +143,94 @@ export function isTrowRunning(items: readonly ToolActivityItem[]): boolean {
  */
 export function trowNeedsAttention(items: readonly ToolActivityItem[]): boolean {
   return items.some((item) => item.status === 'waiting_permission');
+}
+
+// ── Processing block (#1307) ────────────────────────────────────────────────
+// A processing block folds a maximal run of reasoning + tool groups between two
+// answer texts (a run folds only when it contains tool activity — see
+// foldTimeline in timeline-fold.ts). Its summary reuses the trow bucket
+// clauses; folded
+// reasoning stays inside the block but is not counted in the summary line. The
+// failed count stays visible (errored tools remain collapsed, so the summary
+// line is the failure signal, matching the trow).
+
+/** All tool items across the block's tool groups, in order. */
+function processingTools(children: readonly FoldedTimelineChild[]): ToolActivityItem[] {
+  return children.flatMap((child) => (child.kind === 'tools' ? child.items : []));
+}
+
+/** True while any tool is in flight or any reasoning block is still streaming. */
+export function isProcessingRunning(children: readonly FoldedTimelineChild[]): boolean {
+  return children.some((child) =>
+    child.kind === 'thinking' ? child.live === true : isTrowRunning(child.items),
+  );
+}
+
+/**
+ * True when the block must force itself open: a permission prompt sits inside.
+ * Mirrors `trowNeedsAttention` — an errored tool does NOT force-open; the
+ * settled summary carries the failure count (「N 个失败」 in destructive color).
+ */
+export function processingNeedsAttention(children: readonly FoldedTimelineChild[]): boolean {
+  return children.some((child) => child.kind === 'tools' && trowNeedsAttention(child.items));
+}
+
+/**
+ * Summary line for a processing block. Settled: the tool-activity roll-up only
+ * (per-bucket clauses + failed count, exactly the trow summary) — folded
+ * reasoning is not counted. Live (`{ live: true }`): the current activity —
+ * the LAST live entry in timeline order (a running tool's intent, or the
+ * reasoning label when a later thinking block is still streaming), prefixed
+ * with "正在" — plus the failed clause whenever the block already holds an
+ * errored tool, so the failure signal is never deferred to settle.
+ */
+export function summarizeProcessing(
+  children: readonly FoldedTimelineChild[],
+  options?: { live?: boolean; locale?: UiLocale },
+): string {
+  const locale = options?.locale ?? 'zh';
+  if (options?.live) return processingLiveSummary(children, locale);
+  return summarizeTrowTools(processingTools(children), { locale });
+}
+
+/** Current-activity line for a running processing block. */
+function processingLiveSummary(
+  children: readonly FoldedTimelineChild[],
+  locale: UiLocale,
+): string {
+  const copy = getToolActivityCopy(locale).summary;
+  const line = copy.live(currentProcessingActivity(children, locale) ?? copy.thinkingActivity);
+  const failed = processingTools(children).filter((tool) => isFailed(tool.status)).length;
+  return failed > 0 ? copy.join([line, copy.failed(failed)]) : line;
+}
+
+/**
+ * The block's current activity: walk the children in reverse timeline order
+ * and return the first live entry found — a still-streaming thinking block
+ * (reasoning label) or a tool group's active tool (intent, falling back to the
+ * localized display name via resolveToolDisplayName so connector tools read as
+ * 「加载工具组」, not `load_tools`).
+ */
+function currentProcessingActivity(
+  children: readonly FoldedTimelineChild[],
+  locale: UiLocale,
+): string | undefined {
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const child = children[index]!;
+    if (child.kind === 'thinking') {
+      if (child.live === true) return getToolActivityCopy(locale).summary.thinkingActivity;
+      continue;
+    }
+    const activeTool = [...child.items]
+      .reverse()
+      .find(
+        (tool) =>
+          tool.status === 'running' || tool.status === 'pending' || tool.status === 'waiting_permission',
+      );
+    if (activeTool) {
+      return formatUserVisibleToolText(activeTool.intent ?? '', locale)
+        || resolveToolDisplayName(activeTool, locale);
+    }
+  }
+  return undefined;
 }
