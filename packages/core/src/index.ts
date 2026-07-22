@@ -1096,6 +1096,7 @@ export {
   READY_PROVIDER_TYPES,
   backendKindOf,
   connectionEnabledModelIds,
+  reconcileConnectionAfterModelFetch,
   effectiveBaseUrl,
   migrateConnectionV1ToV2,
   normalizeConnectionBaseUrl,
