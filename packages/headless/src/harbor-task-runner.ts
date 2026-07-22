@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { writeFile } from 'node:fs/promises';
 import { basename, delimiter, join } from 'node:path';
@@ -41,9 +42,9 @@ import {
   type ProviderUsageProtocol,
 } from './provider-auth-proxy.js';
 import {
+  isSensitiveEnvName,
   providerBaseUrlFromEnv,
   providerCredentialEnv,
-  requireProviderCredentialEnv,
 } from './provider-env.js';
 import { lenientPositiveIntEnv } from './headless-run-env.js';
 import {
@@ -69,11 +70,13 @@ const TRIAL_CELL_OUTPUT = 'agent/maka-cell-output.json';
 const TRIAL_EXECUTION_IDENTITY = 'agent/maka-cell-execution-identity.json';
 const TRIAL_USAGE_CHECKPOINT = 'agent/maka-cell-usage-checkpoint.json';
 const TRIAL_RUNTIME_EVENTS = 'agent/runtime-events.jsonl';
+const TRIAL_TASK_RUN_TRACE_EVENTS = 'agent/trace-events.jsonl';
 const TRIAL_REWARD = 'verifier/reward.txt';
 const TRIAL_VERIFIER_STDOUT = 'verifier/test-stdout.txt';
 const TRIAL_VERIFIER_OUTCOME = 'verifier/maka-verifier-outcome.json';
 const TRIAL_RESULT = 'result.json';
-const TRIAL_TRACE_EVENTS_ROOT = 'agent/maka-storage/sessions';
+const TRIAL_TASK_RUN_TRACE_EVENTS_ROOT = 'agent/maka-task-run/runs/sessions';
+const TRIAL_LEGACY_TRACE_EVENTS_ROOT = 'agent/maka-storage/sessions';
 const PROVIDER_REQUEST_TELEMETRY = 'provider-request-telemetry.json';
 
 /** A Harbor-side failure (build/docker/timeout/missing artifact) — NOT a benchmark
@@ -128,9 +131,6 @@ export interface HarborTaskRunnerOptions {
   apiKeyFile?: string;
   /** Resolves the current provider authority inside the host proxy for every request. */
   resolveProviderCredential?: ProviderUpstreamCredentialResolver;
-  /** Raw API-key env var the host-side cell uses (default derived from provider).
-   * A legacy *_API_KEY_FILE name is normalized to its raw *_API_KEY companion. */
-  apiKeyEnvName?: string;
   /** Per-1M USD pricing forwarded as MAKA_TRIAL_* so the cell emits real costUsd. */
   pricing?: HarborTaskPricing;
   /** Extra agent env merged last (e.g. DEEPSEEK_BASE_URL). */
@@ -229,7 +229,11 @@ export function createHarborTaskRunner(options: HarborTaskRunnerOptions): Harbor
       ...options,
       agentEnv: mergeAgentEnv(options.agentEnv, input.agentEnv),
     };
-    assertNoProviderSecretsInAgentEnv(runnerOptions.agentEnv);
+    const allowedHostCredentialEnvNames =
+      runnerOptions.provider === 'github-copilot'
+        ? new Set(providerCredentialEnv('github-copilot')?.apiKeys ?? [])
+        : undefined;
+    assertNoProviderSecretsInAgentEnv(runnerOptions.agentEnv, allowedHostCredentialEnvNames);
     const hasHostProviderRuntime =
       runnerOptions.apiKeyFile !== undefined ||
       runnerOptions.resolveProviderCredential !== undefined ||
@@ -331,6 +335,7 @@ export function createHarborTaskRunner(options: HarborTaskRunnerOptions): Harbor
             trialDir,
             input.task.id,
             runnerOptions.agent,
+            harborTraceMode(runnerOptions.agentEnv),
           );
           throw new FixedPromptBudgetExhaustedError(
             `agent budget exhausted for task ${input.task.id}`,
@@ -390,7 +395,13 @@ export function createHarborTaskRunner(options: HarborTaskRunnerOptions): Harbor
           ...cell,
           ...(providerTelemetry.length > 0 ? { providerTelemetryPath } : {}),
           runtimeEventsPath: hostEventsPath,
-          traceEventsPath: hostTraceEventsPath(runnerOptions.agent, trialDir, cell, hostEventsPath),
+          traceEventsPath: hostTraceEventsPath(
+            runnerOptions.agent,
+            harborTraceMode(runnerOptions.agentEnv),
+            trialDir,
+            cell,
+            hostEventsPath,
+          ),
         },
       };
     } catch (error) {
@@ -568,19 +579,25 @@ async function readOptionalCellOutput(
 
 function hostTraceEventsPath(
   agent: HarborTaskRunnerOptions['agent'],
+  mode: 'cell' | 'task-run',
   trialDir: string,
   cell: HarborCellOutput,
   hostEventsPath: string,
 ): string {
   if (agent !== undefined && agent !== 'maka') return hostEventsPath;
-  return join(
-    trialDir,
-    TRIAL_TRACE_EVENTS_ROOT,
-    cell.runtimeRefs.sessionId,
-    'runs',
-    cell.runtimeRefs.runId,
-    'events.jsonl',
-  );
+  const traceSuffix = [cell.runtimeRefs.sessionId, 'runs', cell.runtimeRefs.runId, 'events.jsonl'];
+  if (mode === 'task-run') {
+    const combinedTracePath = join(trialDir, TRIAL_TASK_RUN_TRACE_EVENTS);
+    if (existsSync(combinedTracePath)) return combinedTracePath;
+    const taskRunTracePath = join(trialDir, TRIAL_TASK_RUN_TRACE_EVENTS_ROOT, ...traceSuffix);
+    return existsSync(taskRunTracePath) ? taskRunTracePath : hostEventsPath;
+  }
+  const cellTracePath = join(trialDir, TRIAL_LEGACY_TRACE_EVENTS_ROOT, ...traceSuffix);
+  return existsSync(cellTracePath) ? cellTracePath : hostEventsPath;
+}
+
+function harborTraceMode(agentEnv: Record<string, string> | undefined): 'cell' | 'task-run' {
+  return agentEnv?.MAKA_HARBOR_MODE === 'task-run' ? 'task-run' : 'cell';
 }
 
 function cellArtifactRefs(
@@ -588,8 +605,9 @@ function cellArtifactRefs(
   hostEventsPath: string,
   trialDir: string,
   agent: HarborTaskRunnerOptions['agent'],
+  mode: 'cell' | 'task-run',
 ) {
-  const traceEventsPath = hostTraceEventsPath(agent, trialDir, cell, hostEventsPath);
+  const traceEventsPath = hostTraceEventsPath(agent, mode, trialDir, cell, hostEventsPath);
   return {
     runtimeEventsPath: hostEventsPath,
     traceEventsPath,
@@ -602,9 +620,11 @@ async function readTimedOutTrialArtifacts(
   trialDir: string,
   taskId: string,
   agent: HarborTaskRunnerOptions['agent'],
+  mode: 'cell' | 'task-run',
 ) {
   const cell = await readOptionalCellOutput(join(trialDir, TRIAL_CELL_OUTPUT), taskId);
-  if (cell) return cellArtifactRefs(cell, join(trialDir, TRIAL_RUNTIME_EVENTS), trialDir, agent);
+  if (cell)
+    return cellArtifactRefs(cell, join(trialDir, TRIAL_RUNTIME_EVENTS), trialDir, agent, mode);
   const [executionIdentity, tokenSummary] = await Promise.all([
     readOptionalExecutionIdentity(join(trialDir, TRIAL_EXECUTION_IDENTITY)),
     readOptionalTokenSummary(join(trialDir, TRIAL_USAGE_CHECKPOINT)),
@@ -1071,9 +1091,6 @@ async function hostSideProviderRuntime(options: HarborTaskRunnerOptions): Promis
           ? {
               MAKA_HOST_BASE_URL: proxy.baseUrl,
               MAKA_HOST_API_KEY: proxy.token,
-              MAKA_HOST_API_KEY_ENV_NAME: normalizeRawKeyEnvName(
-                options.apiKeyEnvName ?? requireProviderCredentialEnv(provider).apiKeys[0]!,
-              ),
             }
           : {
               MAKA_PROVIDER_PROXY_URL: proxy.baseUrl,
@@ -1084,13 +1101,6 @@ async function hostSideProviderRuntime(options: HarborTaskRunnerOptions): Promis
       close: proxy.close,
     };
   }
-  const apiKeyEnvName = copilotCredential
-    ? 'COPILOT_GITHUB_TOKEN'
-    : options.apiKeyFile
-      ? normalizeRawKeyEnvName(
-          options.apiKeyEnvName ?? requireProviderCredentialEnv(provider).apiKeys[0]!,
-        )
-      : undefined;
   return {
     env: {
       MAKA_HOST_REPO_ROOT: options.makaRepoPath,
@@ -1099,7 +1109,6 @@ async function hostSideProviderRuntime(options: HarborTaskRunnerOptions): Promis
         : options.apiKeyFile
           ? { MAKA_HOST_API_KEY_FILE: options.apiKeyFile }
           : {}),
-      ...(apiKeyEnvName ? { MAKA_HOST_API_KEY_ENV_NAME: apiKeyEnvName } : {}),
       ...(!options.apiKeyFile && !copilotCredential ? { MAKA_HOST_NO_AUTH: 'true' } : {}),
       ...(baseUrl ? { MAKA_HOST_BASE_URL: baseUrl } : {}),
       ...(copilotCredential ? { MAKA_HOST_MODEL_API_PROTOCOL: copilotCredential.apiProtocol } : {}),
@@ -1207,14 +1216,19 @@ function taskAgentEnvWithoutProviderSecrets(
     )
       continue;
     if (key === 'MAKA_BASE_URL') continue;
-    if (/_API_KEY(_FILE)?$/.test(key)) continue;
+    if (isSensitiveEnvName(key)) continue;
     result[key] = value;
   }
   return result;
 }
 
-function assertNoProviderSecretsInAgentEnv(agentEnv: Record<string, string> | undefined): void {
-  const forbidden = Object.keys(agentEnv ?? {}).filter((key) => /_API_KEY(_FILE)?$/.test(key));
+function assertNoProviderSecretsInAgentEnv(
+  agentEnv: Record<string, string> | undefined,
+  allowedHostCredentialEnvNames: ReadonlySet<string> = new Set(),
+): void {
+  const forbidden = Object.keys(agentEnv ?? {}).filter(
+    (key) => isSensitiveEnvName(key) && !allowedHostCredentialEnvNames.has(key),
+  );
   if (forbidden.length > 0) {
     throw new Error(`agentEnv must not contain provider secrets: ${forbidden.sort().join(', ')}`);
   }
@@ -1229,10 +1243,6 @@ function assertNoExperimentIdentityOverrides(agentEnv: Record<string, string> | 
       `agentEnv must not override experiment identity: ${forbidden.sort().join(', ')}`,
     );
   }
-}
-
-function normalizeRawKeyEnvName(name: string): string {
-  return name.endsWith('_FILE') ? name.slice(0, -'_FILE'.length) : name;
 }
 
 function providerRequiresSecret(provider: string | undefined): boolean {

@@ -6,18 +6,30 @@ import { dirname, join, resolve } from 'node:path';
 import type { BackendKind, ProviderType } from '@maka/core';
 import { PROVIDER_DEFAULTS, normalizeProviderType } from '@maka/core';
 import type { Config, Task } from './contracts.js';
+import {
+  type HarborCellExecutionIdentity,
+  combineInvocations,
+  validateHarborCellExecutionIdentity,
+} from './cell-output.js';
 import { runAutonomousTask } from './autonomous-agent-loop.js';
 import type { BenchmarkAdapterRegistry } from './benchmark-adapters.js';
+import { resolveEconomyTaskMode } from './economy-task-policy.js';
 import {
   buildHarborAiSdkBackendRegistration,
   buildHarborCellContextBudgetPolicySnapshot,
   createHarborCellLocalToolExecutor,
   createHarborHttpToolExecutor,
+  harborCellSoftTimeoutMsFromEnv,
+  reasoningEffortFromEnv,
   runHarborCell,
+  writeHarborCellArtifacts,
+  writeHarborCellExecutionIdentity,
+  writeHarborTaskRunTrace,
   type RunHarborCellEnv,
   type RunHarborCellInput,
 } from './harbor-cell.js';
 import { classifyExternalHarborBenchmarkFailure } from './harbor-failure-policy.js';
+import { resolveHeavyTaskMode } from './heavy-task-policy.js';
 import type { RealBackendIsolation } from './isolation.js';
 import { writeTaskRunExport } from './result-export.js';
 import { backendNeedsIsolation } from './runner.js';
@@ -25,6 +37,7 @@ import { runTaskOnce } from './task-agent-controller.js';
 import { taxonomyFromResultRecord } from './task-contracts.js';
 import { createTaskRunStore } from './task-run-store.js';
 import { requireProviderCredentialEnv } from './provider-env.js';
+import { resolveHeadlessSystemPrompt } from './system-prompts.js';
 
 type HarborMode = 'cell' | 'task-run';
 type HarborIsolationMode = 'none' | 'harbor-local' | 'harbor-http';
@@ -45,6 +58,7 @@ interface HarborRunOptions {
   workdir: string;
   sourceWorkspaceDir: string;
   outDir: string;
+  cellArtifactDir: string;
   storageRoot: string;
   taskId: string;
   taskRunId: string;
@@ -56,6 +70,7 @@ interface HarborRunOptions {
   maxAttempts: number;
   maxRuntimeSteps?: number;
   maxWallTimeMs?: number;
+  softTimeoutMs?: number;
   replayPriorAttemptRuntimeContext: boolean;
   now: () => number;
   newId: () => string;
@@ -131,6 +146,7 @@ async function runHarborCellMode(options: HarborRunOptions): Promise<number> {
     outputDir: options.outDir,
     storageRoot: options.storageRoot,
     ...(options.contextBudgetPolicy ? { contextBudgetPolicy: options.contextBudgetPolicy } : {}),
+    ...(options.softTimeoutMs !== undefined ? { settleAfterMs: options.softTimeoutMs } : {}),
     ...(options.registerBackends ? { registerBackends: options.registerBackends } : {}),
     ...(options.realBackendIsolation ? { realBackendIsolation: options.realBackendIsolation } : {}),
     now: options.now,
@@ -149,12 +165,16 @@ async function runHarborCellMode(options: HarborRunOptions): Promise<number> {
 }
 
 async function runHarborTaskRunMode(options: HarborRunOptions): Promise<number> {
-  await mkdir(options.outDir, { recursive: true });
+  await Promise.all([
+    mkdir(options.outDir, { recursive: true }),
+    mkdir(options.cellArtifactDir, { recursive: true }),
+  ]);
   if (options.sourceWorkspaceDir !== options.workdir) {
     await mkdir(options.sourceWorkspaceDir, { recursive: true });
   }
   const store = createTaskRunStore(options.storageRoot);
   const task = buildHarborTask(options);
+  const executionIdentity = await writeTaskRunExecutionIdentity(options, task);
   const common = {
     storageRoot: options.storageRoot,
     taskRunStore: store,
@@ -164,6 +184,9 @@ async function runHarborTaskRunMode(options: HarborRunOptions): Promise<number> 
     ...(options.realBackendIsolation ? { realBackendIsolation: options.realBackendIsolation } : {}),
     now: options.now,
     newId: options.newId,
+    ...(options.softTimeoutMs !== undefined
+      ? { deadlineAtMs: options.now() + options.softTimeoutMs }
+      : {}),
   };
   const run = options.autonomous
     ? await runAutonomousTask(options.config, task, {
@@ -215,12 +238,49 @@ async function runHarborTaskRunMode(options: HarborRunOptions): Promise<number> 
     includeEvents: options.includeEvents,
   });
   const latestScore = run.projection.latestScoreResult;
+  const invocations =
+    'attempts' in run ? run.attempts.flatMap((attempt) => attempt.invocations) : run.invocations;
+  const invocation = invocations.length > 0 ? combineInvocations(invocations) : undefined;
+  const settledByDeadline =
+    'attempts' in run
+      ? run.attempts.some((attempt) => attempt.settledByDeadline)
+      : run.settledByDeadline;
+  const cellArtifacts = invocation
+    ? await writeHarborCellArtifacts({
+        outputDir: options.cellArtifactDir,
+        executionIdentity,
+        invocation,
+        promptHash: executionIdentity.systemPromptHash,
+        ...(settledByDeadline
+          ? {
+              deadlineSettlement: {
+                source: 'benchmark.deadline' as const,
+                mode: 'immediate' as const,
+              },
+            }
+          : {}),
+        ...(options.contextBudgetPolicy
+          ? { contextBudgetPolicy: options.contextBudgetPolicy }
+          : {}),
+      })
+    : undefined;
+  const traceEventsPath =
+    invocations.length > 0
+      ? await writeHarborTaskRunTrace({
+          outputDir: options.cellArtifactDir,
+          storageRoot: options.storageRoot,
+          invocations,
+        })
+      : undefined;
   const taxonomy =
-    latestScore?.taxonomy ??
-    run.projection.result?.taxonomy ??
-    taxonomyFromResultRecord(run.resultRecord);
+    run.projection.status === 'budget_exhausted'
+      ? 'budget_exhausted'
+      : (latestScore?.taxonomy ??
+        run.projection.result?.taxonomy ??
+        taxonomyFromResultRecord(run.resultRecord));
   const benchmarkFailure = classifyExternalHarborBenchmarkFailure({
-    status: run.resultRecord.status,
+    status:
+      run.projection.status === 'budget_exhausted' ? 'budget_exhausted' : run.resultRecord.status,
     errorClass: run.resultRecord.errorClass,
     error: run.resultRecord.error,
     taxonomy,
@@ -230,11 +290,19 @@ async function runHarborTaskRunMode(options: HarborRunOptions): Promise<number> 
       mode: 'task-run',
       taskRunId: run.taskRunId,
       status: run.projection.status,
+      settledByDeadline,
       taxonomy,
       scored: latestScore?.scored ?? run.resultRecord.scored ?? false,
       authoritative: latestScore?.authority?.authoritative ?? false,
       benchmarkFailureKind: benchmarkFailure.kind,
       benchmarkFailureShouldThrow: benchmarkFailure.shouldThrow,
+      ...(cellArtifacts
+        ? {
+            outputPath: cellArtifacts.outputPath,
+            runtimeEventsPath: cellArtifacts.runtimeEventsPath,
+          }
+        : {}),
+      ...(traceEventsPath ? { traceEventsPath } : {}),
       exportDir,
       files: exported.files,
       result: {
@@ -245,7 +313,27 @@ async function runHarborTaskRunMode(options: HarborRunOptions): Promise<number> 
       runtimeRefs: latestScore?.details?.runtimeRefs,
     })}\n`,
   );
-  return benchmarkFailure.shouldThrow ? 1 : 0;
+  return settledByDeadline ? 124 : benchmarkFailure.shouldThrow ? 1 : 0;
+}
+
+async function writeTaskRunExecutionIdentity(
+  options: HarborRunOptions,
+  task: Task,
+): Promise<HarborCellExecutionIdentity> {
+  const prompt = resolveHeadlessSystemPrompt(options.config, {
+    heavyTaskMode: resolveHeavyTaskMode(options.config, task),
+    economyTaskMode: resolveEconomyTaskMode(options.config, task),
+  });
+  const executionIdentity = validateHarborCellExecutionIdentity({
+    llmConnectionSlug: options.config.llmConnectionSlug,
+    model: options.config.model,
+    ...(options.config.thinkingLevel ? { reasoningEffort: options.config.thinkingLevel } : {}),
+    systemPromptMode: prompt.mode,
+    systemPromptHash: prompt.systemPromptHash,
+    pricingProfile: options.env.MAKA_TRIAL_PRICING_SOURCE ?? 'unconfigured',
+  });
+  await writeHarborCellExecutionIdentity(options.cellArtifactDir, executionIdentity);
+  return executionIdentity;
 }
 
 export async function resolveHarborRunOptions(
@@ -272,6 +360,7 @@ export async function resolveHarborRunOptions(
   preflightIsolation(backend, isolation, env);
 
   const outDir = resolve(valueOf(parsed, env, 'out', 'MAKA_OUTPUT_DIR') ?? '/logs/agent');
+  const cellArtifactDir = resolve(env.MAKA_CELL_ARTIFACT_DIR ?? outDir);
   const storageRoot = resolve(
     valueOf(parsed, env, 'storage-root', 'MAKA_STORAGE_ROOT') ??
       (mode === 'task-run' ? join(outDir, 'runs') : join(outDir, 'maka-storage')),
@@ -304,6 +393,7 @@ export async function resolveHarborRunOptions(
     valueOf(parsed, env, 'max-wall-time-sec', 'MAKA_MAX_WALL_TIME_SEC'),
     '--max-wall-time-sec',
   );
+  const softTimeoutMs = harborCellSoftTimeoutMsFromEnv(env);
   const config = buildConfig({
     parsed,
     env,
@@ -322,6 +412,7 @@ export async function resolveHarborRunOptions(
     workdir,
     sourceWorkspaceDir,
     outDir,
+    cellArtifactDir,
     storageRoot,
     taskId,
     taskRunId,
@@ -336,6 +427,7 @@ export async function resolveHarborRunOptions(
     ),
     ...(maxRuntimeSteps !== undefined ? { maxRuntimeSteps } : {}),
     ...(maxWallTimeSec !== undefined ? { maxWallTimeMs: maxWallTimeSec * 1000 } : {}),
+    ...(softTimeoutMs !== undefined ? { softTimeoutMs } : {}),
     replayPriorAttemptRuntimeContext:
       parsed.bools['replay-prior-attempt-runtime-context'] ||
       truthyEnv(env.MAKA_REPLAY_PRIOR_ATTEMPT_RUNTIME_CONTEXT),
@@ -419,12 +511,14 @@ function buildConfig(input: {
   heavyTask: boolean;
   economyTask: boolean;
 }): Config {
+  const thinkingLevel = reasoningEffortFromEnv(input.env.MAKA_REASONING_EFFORT);
   if (input.backend === 'fake') {
     return {
       id: input.parsed.flags['config-id'] ?? input.env.MAKA_CONFIG_ID ?? 'harbor-fake',
       backend: 'fake',
       llmConnectionSlug: input.env.MAKA_LLM_CONNECTION_SLUG ?? 'fake',
       model: input.env.MAKA_MODEL ?? input.env.HARBOR_MODEL ?? 'fake',
+      ...(thinkingLevel ? { thinkingLevel } : {}),
       ...(input.heavyTask
         ? { heavyTaskMode: { enabled: true, reason: 'maka eval harbor run --heavy-task' } }
         : {}),
@@ -448,6 +542,7 @@ function buildConfig(input: {
     backend: 'ai-sdk',
     llmConnectionSlug: input.env.MAKA_LLM_CONNECTION_SLUG ?? modelSpec.provider,
     model: modelSpec.model,
+    ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(input.env.MAKA_SYSTEM_PROMPT !== undefined
       ? { systemPrompt: input.env.MAKA_SYSTEM_PROMPT }
       : {}),

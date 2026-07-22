@@ -33,9 +33,12 @@ import {
 import { registerFakeBackend } from './backends.js';
 import {
   buildHarborCellOutput,
+  combineInvocations,
   countRuntimeSteps,
   validateHarborCellOutput,
   type HarborCellContextBudgetPolicySnapshot,
+  type HarborCellDeadlineSettlement,
+  type HarborCellExecutionIdentity,
   type HarborCellOutput,
 } from './cell-output.js';
 import type { Config, Task } from './contracts.js';
@@ -55,6 +58,7 @@ import {
 } from './task-ledger-experiment.js';
 import {
   booleanEnv,
+  MAX_NODE_TIMER_MS,
   numericEnv,
   positiveIntEnv,
   type RunHarborCellEnv,
@@ -91,13 +95,16 @@ export {
 } from './harbor-cell-tool-executor.js';
 export {
   providerApiKeyEnvName,
+  resolveHostProviderAuthority,
   resolveHarborCellAiSdkEnv,
+  type ResolvedHostProviderAuthority,
   type ResolvedHarborCellAiSdkEnv,
 } from './provider-env.js';
 export type { RunHarborCellEnv } from './headless-run-env.js';
 
 export const HARBOR_CELL_OUTPUT_FILENAME = 'maka-cell-output.json';
 export const HARBOR_CELL_RUNTIME_EVENTS_FILENAME = 'runtime-events.jsonl';
+export const HARBOR_CELL_TRACE_EVENTS_FILENAME = 'trace-events.jsonl';
 export const HARBOR_CELL_EXECUTION_IDENTITY_FILENAME = 'maka-cell-execution-identity.json';
 export const HARBOR_CELL_USAGE_CHECKPOINT_FILENAME = 'maka-cell-usage-checkpoint.json';
 
@@ -153,6 +160,23 @@ export interface RunHarborCellResult {
   outputPath: string;
   runtimeEventsPath: string;
   settledByDeadline: boolean;
+}
+
+export interface WriteHarborCellArtifactsInput {
+  invocation: InvocationResult;
+  outputDir: string;
+  promptHash?: string;
+  executionIdentity?: HarborCellExecutionIdentity;
+  deadlineSettlement?: HarborCellDeadlineSettlement;
+  contextBudgetPolicy?: HarborCellContextBudgetPolicySnapshot;
+  continuationSummary?: HarborCellContinuationSummary;
+  taskToolSummaryEnabled?: boolean;
+}
+
+export interface WriteHarborCellArtifactsResult {
+  output: HarborCellOutput;
+  outputPath: string;
+  runtimeEventsPath: string;
 }
 
 export const HARBOR_CELL_DEFAULT_CONTINUATION_PROMPT =
@@ -283,12 +307,7 @@ export async function runHarborCell(input: RunHarborCellInput): Promise<RunHarbo
     systemPromptHash: prompt.systemPromptHash,
     pricingProfile: input.pricingProfile ?? 'unconfigured',
   };
-  await mkdir(input.outputDir, { recursive: true });
-  await writeFile(
-    join(input.outputDir, HARBOR_CELL_EXECUTION_IDENTITY_FILENAME),
-    `${JSON.stringify(executionIdentity, null, 2)}\n`,
-    { encoding: 'utf8', flush: true },
-  );
+  await writeHarborCellExecutionIdentity(input.outputDir, executionIdentity);
 
   let invocation: InvocationResult | undefined;
   const manager = new SessionManager({
@@ -406,39 +425,95 @@ export async function runHarborCell(input: RunHarborCellInput): Promise<RunHarbo
     ? buildContinuationSummary(continuationPolicy, invocations, stepCapHits)
     : undefined;
 
+  const artifacts = await writeHarborCellArtifacts({
+    invocation: combinedInvocation,
+    outputDir: input.outputDir,
+    executionIdentity,
+    ...(settledByDeadline
+      ? {
+          deadlineSettlement: {
+            source: 'benchmark.deadline' as const,
+            mode: 'immediate' as const,
+          },
+        }
+      : {}),
+    ...(input.contextBudgetPolicy ? { contextBudgetPolicy: input.contextBudgetPolicy } : {}),
+    ...(continuationSummary ? { continuationSummary } : {}),
+    ...(input.taskToolSummaryEnabled !== undefined
+      ? { taskToolSummaryEnabled: input.taskToolSummaryEnabled }
+      : {}),
+  });
+
+  return {
+    invocation: combinedInvocation,
+    ...artifacts,
+    settledByDeadline,
+  };
+}
+
+export async function writeHarborCellExecutionIdentity(
+  outputDir: string,
+  executionIdentity: HarborCellExecutionIdentity,
+): Promise<void> {
+  await mkdir(outputDir, { recursive: true });
+  await writeHarborCellArtifact(
+    join(outputDir, HARBOR_CELL_EXECUTION_IDENTITY_FILENAME),
+    `${JSON.stringify(executionIdentity, null, 2)}\n`,
+  );
+}
+
+export async function writeHarborCellArtifacts(
+  input: WriteHarborCellArtifactsInput,
+): Promise<WriteHarborCellArtifactsResult> {
   await mkdir(input.outputDir, { recursive: true });
   const runtimeEventsPath = join(input.outputDir, HARBOR_CELL_RUNTIME_EVENTS_FILENAME);
   const outputPath = join(input.outputDir, HARBOR_CELL_OUTPUT_FILENAME);
-  await writeHarborCellArtifact(runtimeEventsPath, runtimeEventsJsonl(combinedInvocation));
+  await writeHarborCellArtifact(runtimeEventsPath, runtimeEventsJsonl(input.invocation));
   const output = validateHarborCellOutput(
     buildHarborCellOutput({
-      invocation: combinedInvocation,
+      invocation: input.invocation,
       runtimeEventsPath,
-      executionIdentity,
-      ...(settledByDeadline
-        ? {
-            deadlineSettlement: {
-              source: 'benchmark.deadline' as const,
-              mode: 'immediate' as const,
-            },
-          }
-        : {}),
+      ...(input.promptHash ? { promptHash: input.promptHash } : {}),
+      ...(input.executionIdentity ? { executionIdentity: input.executionIdentity } : {}),
+      ...(input.deadlineSettlement ? { deadlineSettlement: input.deadlineSettlement } : {}),
       ...(input.contextBudgetPolicy ? { contextBudgetPolicy: input.contextBudgetPolicy } : {}),
-      ...(continuationSummary ? { continuationSummary } : {}),
+      ...(input.continuationSummary ? { continuationSummary: input.continuationSummary } : {}),
       ...(input.taskToolSummaryEnabled !== undefined
         ? { taskToolSummaryEnabled: input.taskToolSummaryEnabled }
         : {}),
     }),
   );
   await writeHarborCellArtifact(outputPath, `${JSON.stringify(output, null, 2)}\n`);
+  return { output, outputPath, runtimeEventsPath };
+}
 
-  return {
-    invocation: combinedInvocation,
-    output,
-    outputPath,
-    runtimeEventsPath,
-    settledByDeadline,
-  };
+export async function writeHarborTaskRunTrace(input: {
+  outputDir: string;
+  storageRoot: string;
+  invocations: readonly InvocationResult[];
+}): Promise<string> {
+  const chunks = await Promise.all(
+    input.invocations.map((invocation) =>
+      readFile(
+        join(
+          input.storageRoot,
+          'sessions',
+          invocation.sessionId,
+          'runs',
+          invocation.runId,
+          'events.jsonl',
+        ),
+        'utf8',
+      ),
+    ),
+  );
+  const nonEmptyChunks = chunks.map((chunk) => chunk.trimEnd()).filter(Boolean);
+  const traceEventsPath = join(input.outputDir, HARBOR_CELL_TRACE_EVENTS_FILENAME);
+  await writeHarborCellArtifact(
+    traceEventsPath,
+    nonEmptyChunks.length > 0 ? `${nonEmptyChunks.join('\n')}\n` : '',
+  );
+  return traceEventsPath;
 }
 
 export async function runHarborCellFromEnv(
@@ -568,7 +643,7 @@ export async function runHarborCellFromEnv(
 export function reasoningEffortFromEnv(
   value: string | undefined,
 ): import('@maka/core').ThinkingLevel | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined || value === '') return undefined;
   if (!isThinkingLevel(value)) throw new Error(`unsupported MAKA_REASONING_EFFORT: ${value}`);
   return value;
 }
@@ -606,7 +681,11 @@ export function harborCellMaxStepsFromEnv(env: RunHarborCellEnv = process.env): 
 export function harborCellSoftTimeoutMsFromEnv(
   env: RunHarborCellEnv = process.env,
 ): number | undefined {
-  return positiveIntEnv(env.MAKA_CELL_SOFT_TIMEOUT_MS, 'MAKA_CELL_SOFT_TIMEOUT_MS');
+  const value = positiveIntEnv(env.MAKA_CELL_SOFT_TIMEOUT_MS, 'MAKA_CELL_SOFT_TIMEOUT_MS');
+  if (value !== undefined && value > MAX_NODE_TIMER_MS) {
+    throw new Error(`MAKA_CELL_SOFT_TIMEOUT_MS must not exceed ${MAX_NODE_TIMER_MS}`);
+  }
+  return value;
 }
 
 function isToolCallStepCap(invocation: InvocationResult): boolean {
@@ -614,23 +693,6 @@ function isToolCallStepCap(invocation: InvocationResult): boolean {
     invocation.failure?.class === 'tool_step_cap_reached' ||
     invocation.failure?.class === 'incomplete_tool_calls'
   );
-}
-
-function combineInvocations(invocations: readonly InvocationResult[]): InvocationResult {
-  const first = invocations[0];
-  const last = invocations[invocations.length - 1];
-  if (!first || !last) throw new Error('cannot combine empty Harbor invocations');
-  return {
-    invocationId: last.invocationId,
-    sessionId: last.sessionId,
-    runId: last.runId,
-    turnId: last.turnId,
-    status: last.status,
-    ...(last.failure ? { failure: last.failure } : {}),
-    events: invocations.flatMap((candidate) => candidate.events),
-    startedAt: first.startedAt,
-    finishedAt: last.finishedAt,
-  };
 }
 
 function buildContinuationSummary(

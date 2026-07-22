@@ -38,6 +38,7 @@ import {
   buildHarborCellAiSdkTools,
   buildHarborCellTaskLedgerExperimentPolicy,
   harborCellMaxStepsFromEnv,
+  harborCellSoftTimeoutMsFromEnv,
   createHarborCellLocalToolExecutor,
   createHarborHttpToolExecutor,
   HARBOR_CELL_CONTEXT_ENV_KEYS,
@@ -1754,6 +1755,13 @@ describe('runHarborCell', () => {
       /MAKA_MAX_STEPS must be a positive integer/,
     );
     assert.equal(harborCellMaxStepsFromEnv({}), undefined);
+  });
+
+  test('rejects a soft timeout above the Node timer limit', () => {
+    assert.throws(
+      () => harborCellSoftTimeoutMsFromEnv({ MAKA_CELL_SOFT_TIMEOUT_MS: '2147483648' }),
+      /MAKA_CELL_SOFT_TIMEOUT_MS must not exceed 2147483647/,
+    );
   });
 
   test('host-side Harbor cell config reads MAKA_ECONOMY_TASK_MODE', async () => {
@@ -3711,7 +3719,10 @@ setTimeout(() => {
     const missing = resolveHarborCellAiSdkEnv({
       provider: 'ollama-cloud',
       model: 'qwen3.5:397b',
-      env: { OPENAI_API_KEY: 'must-not-cross-provider-boundary' },
+      env: {
+        MAKA_CREDENTIALS_PATH: join(tmpdir(), 'missing-maka-test-credentials.json'),
+        OPENAI_API_KEY: 'must-not-cross-provider-boundary',
+      },
       ts: 1,
     });
     assert.equal(missing.apiKey, '');
@@ -3779,7 +3790,10 @@ setTimeout(() => {
       const missing = resolveHarborCellAiSdkEnv({
         provider: provider.type,
         model: provider.modelId,
-        env: { OPENAI_API_KEY: 'must-not-cross-provider-boundary' },
+        env: {
+          MAKA_CREDENTIALS_PATH: join(tmpdir(), 'missing-maka-test-credentials.json'),
+          OPENAI_API_KEY: 'must-not-cross-provider-boundary',
+        },
         ts: 1,
       });
       assert.equal(missing.apiKey, '');
@@ -4728,17 +4742,37 @@ describe('createHarborCellLocalToolExecutor', () => {
     assert.equal(result.stdout, 'ok');
   });
 
-  test('scrubs provider API-key env so task commands cannot read the secret', async () => {
+  test('scrubs secret-shaped env so task commands cannot read unregistered credentials', async () => {
     const executor = createHarborCellLocalToolExecutor({
       DEEPSEEK_API_KEY_FILE: '/run/secrets/deepseek-key',
       DEEPSEEK_API_KEY: 'sk-should-not-leak',
+      ACME_API_KEY: 'unregistered-secret',
+      GOOGLE_APPLICATION_CREDENTIALS: '/tmp/google-credentials.json',
+      PGPASSWORD: 'postgres-secret',
+      MAX_TOKENS: '4096',
     });
     const result = await executor.exec({
-      command: 'printf "[%s][%s]" "${DEEPSEEK_API_KEY_FILE:-}" "${DEEPSEEK_API_KEY:-}"',
+      command:
+        'printf "[%s][%s][%s][%s][%s][%s]" "${DEEPSEEK_API_KEY_FILE:-}" "${DEEPSEEK_API_KEY:-}" "${ACME_API_KEY:-}" "${GOOGLE_APPLICATION_CREDENTIALS:-}" "${PGPASSWORD:-}" "${MAX_TOKENS:-}"',
       cwd: process.cwd(),
     });
     assert.equal(result.exitCode, 0);
-    assert.equal(result.stdout, '[][]');
+    assert.equal(result.stdout, '[][][][][][4096]');
+  });
+
+  test('scrubs provider token env so task commands cannot read OAuth credentials', async () => {
+    const executor = createHarborCellLocalToolExecutor({
+      OPENAI_CODEX_OAUTH_TOKEN: 'oauth-should-not-leak',
+      COPILOT_GITHUB_TOKEN: 'copilot-should-not-leak',
+      HF_TOKEN: 'hf-should-not-leak',
+    });
+    const result = await executor.exec({
+      command:
+        'printf "[%s][%s][%s]" "${OPENAI_CODEX_OAUTH_TOKEN:-}" "${COPILOT_GITHUB_TOKEN:-}" "${HF_TOKEN:-}"',
+      cwd: process.cwd(),
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, '[][][]');
   });
 });
 

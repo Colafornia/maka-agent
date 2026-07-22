@@ -191,16 +191,17 @@ export async function runAutonomousTask(
   let runtimeStepsUsed = 0;
   let latestResultRecord: ResultRecord | undefined;
   let priorRuntimeContext = options.priorRuntimeContext ? [...options.priorRuntimeContext] : [];
+  const budgetStartedAt = now();
 
   while (attempts.length < options.budget.maxAttempts) {
     const beforeAttemptBudget = budgetSnapshot(
       options.budget,
       attempts.length,
       runtimeStepsUsed,
-      startedAt,
+      budgetStartedAt,
       now(),
     );
-    if (isWallTimeExhausted(beforeAttemptBudget)) {
+    if (attempts.length > 0 && isWallTimeExhausted(beforeAttemptBudget)) {
       await appendSystemFeedback(
         taskRunStore,
         taskRunId,
@@ -255,16 +256,35 @@ export async function runAutonomousTask(
     latestResultRecord = attempt.resultRecord;
     runtimeStepsUsed += attempt.resultRecord.steps;
     if (options.replayPriorAttemptRuntimeContext) {
-      priorRuntimeContext = [...priorRuntimeContext, ...attempt.invocation.events];
+      priorRuntimeContext = [
+        ...priorRuntimeContext,
+        ...attempt.invocations.flatMap((invocation) => invocation.events),
+      ];
     }
 
     const afterAttemptBudget = budgetSnapshot(
       options.budget,
       attempts.length,
       runtimeStepsUsed,
-      startedAt,
+      budgetStartedAt,
       now(),
     );
+    if (attempt.settledByDeadline) {
+      await appendBudgetTerminal(
+        taskRunStore,
+        taskRunId,
+        now,
+        newId,
+        afterAttemptBudget,
+        'benchmark deadline reached during attempt',
+      );
+      return {
+        taskRunId,
+        attempts,
+        projection: await taskRunStore.project(taskRunId),
+        resultRecord: attempt.resultRecord,
+      };
+    }
     const selfCheck = isWallTimeExhausted(afterAttemptBudget)
       ? undefined
       : await maybeRecordSelfCheck(
@@ -369,7 +389,7 @@ export async function runAutonomousTask(
     options.budget,
     attempts.length,
     runtimeStepsUsed,
-    startedAt,
+    budgetStartedAt,
     now(),
   );
   if (latestResultRecord?.passed) {

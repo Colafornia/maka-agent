@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, test } from 'node:test';
+import { validateHarborCellOutput } from '../cell-output.js';
 import { mapLegacyMakaHeadlessArgs } from '../cli.js';
 import { readResults } from '../results.js';
 
@@ -226,11 +227,60 @@ describe('maka-headless CLI', () => {
     }
   });
 
+  test('harbor run cell forwards its soft timeout to execution', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'maka-headless-harbor-cli-'));
+    try {
+      const fixture = join(dir, 'fixture');
+      const outDir = join(dir, 'out');
+      const storageRoot = join(dir, 'storage');
+      await mkdir(fixture, { recursive: true });
+
+      const result = await runCli(
+        [
+          'harbor',
+          'run',
+          '--mode',
+          'cell',
+          '--backend',
+          'fake',
+          '--isolation',
+          'none',
+          '--instruction',
+          'keep working',
+          '--workdir',
+          fixture,
+          '--out',
+          outDir,
+          '--storage-root',
+          storageRoot,
+        ],
+        {
+          env: {
+            MAKA_MODEL: 'fake-model',
+            MAKA_CELL_SOFT_TIMEOUT_MS: '50',
+          },
+        },
+      );
+
+      assert.equal(result.code, 1, result.stderr);
+      const cell = validateHarborCellOutput(
+        JSON.parse(await readFile(join(outDir, 'maka-cell-output.json'), 'utf8')),
+      );
+      assert.deepEqual(cell.deadlineSettlement, {
+        source: 'benchmark.deadline',
+        mode: 'immediate',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('harbor run task-run writes external Harbor verifier export without fake verifier authority', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'maka-headless-harbor-cli-'));
     try {
       const fixture = join(dir, 'fixture');
       const outDir = join(dir, 'out');
+      const cellArtifactDir = join(dir, 'cell-artifacts');
       await mkdir(fixture, { recursive: true });
       await writeFile(join(fixture, 'README.txt'), 'Harbor owns the task workspace.\n', 'utf8');
 
@@ -254,7 +304,15 @@ describe('maka-headless CLI', () => {
           outDir,
           '--include-events',
         ],
-        { env: { MAKA_ECONOMY_TASK_MODE: 'true' } },
+        {
+          env: {
+            MAKA_ECONOMY_TASK_MODE: 'true',
+            MAKA_CELL_ARTIFACT_DIR: cellArtifactDir,
+            MAKA_MODEL: 'fake-model',
+            MAKA_REASONING_EFFORT: 'xhigh',
+            MAKA_TRIAL_PRICING_SOURCE: 'test-account-plan',
+          },
+        },
       );
       assert.equal(result.code, 0, result.stderr);
       const summary = JSON.parse(result.stdout);
@@ -262,6 +320,24 @@ describe('maka-headless CLI', () => {
       assert.equal(summary.mode, 'task-run');
       assert.equal(summary.scored, false);
       assert.equal(summary.authoritative, false);
+
+      const cell = validateHarborCellOutput(
+        JSON.parse(await readFile(join(cellArtifactDir, 'maka-cell-output.json'), 'utf8')),
+      );
+      assert.equal(cell.status, 'completed');
+      assert.equal(cell.promptHash, cell.executionIdentity?.systemPromptHash);
+      assert.equal(cell.executionIdentity?.llmConnectionSlug, 'fake');
+      assert.equal(cell.executionIdentity?.model, 'fake-model');
+      assert.equal(cell.executionIdentity?.reasoningEffort, 'xhigh');
+      assert.equal(cell.executionIdentity?.pricingProfile, 'test-account-plan');
+      assert.equal(cell.toolSummary.actualToolCalls, 0);
+      assert.equal(cell.steps, 1);
+      assert.equal(cell.runtimeEventsPath, join(cellArtifactDir, 'runtime-events.jsonl'));
+      assert.match(await readFile(cell.runtimeEventsPath, 'utf8'), /"role":"system"/);
+      const durableIdentity = JSON.parse(
+        await readFile(join(cellArtifactDir, 'maka-cell-execution-identity.json'), 'utf8'),
+      );
+      assert.deepEqual(durableIdentity, cell.executionIdentity);
 
       const taskRunJson = JSON.parse(
         await readFile(join(outDir, 'exports', 'harbor-run-1', 'task-run.json'), 'utf8'),
@@ -288,6 +364,66 @@ describe('maka-headless CLI', () => {
       );
       assert.doesNotMatch(resultJson, /verificationPlaceholder/);
       assert.doesNotMatch(resultJson, /unsupported local benchmark placeholder/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('harbor run task-run cell evidence covers every heavy-task invocation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'maka-headless-harbor-heavy-'));
+    try {
+      const fixture = join(dir, 'fixture');
+      const outDir = join(dir, 'out');
+      const cellArtifactDir = join(dir, 'cell-artifacts');
+      await mkdir(fixture, { recursive: true });
+      await writeFile(join(fixture, 'README.txt'), 'Harbor owns the task workspace.\n', 'utf8');
+
+      const result = await runCli(
+        [
+          'harbor',
+          'run',
+          '--backend',
+          'fake',
+          '--isolation',
+          'none',
+          '--instruction',
+          'solve it',
+          '--workdir',
+          fixture,
+          '--task-id',
+          'tb-heavy-trajectory',
+          '--task-run-id',
+          'harbor-heavy-trajectory',
+          '--out',
+          outDir,
+          '--heavy-task',
+        ],
+        { env: { MAKA_CELL_ARTIFACT_DIR: cellArtifactDir, MAKA_MODEL: 'fake-model' } },
+      );
+      assert.equal(result.code, 0, result.stderr);
+
+      const cell = validateHarborCellOutput(
+        JSON.parse(await readFile(join(cellArtifactDir, 'maka-cell-output.json'), 'utf8')),
+      );
+      const runtimeEvents = (await readFile(cell.runtimeEventsPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      const completedModelSteps = runtimeEvents.filter(
+        (event) => event.role === 'model' && event.partial !== true,
+      );
+
+      assert.equal(cell.steps, 2);
+      assert.equal(completedModelSteps.length, 2);
+      const traceEvents = (await readFile(join(cellArtifactDir, 'trace-events.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert.equal(
+        new Set(traceEvents.map((event) => event.runId).filter(Boolean)).size,
+        2,
+        'combined trace must retain both heavy-task runs',
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

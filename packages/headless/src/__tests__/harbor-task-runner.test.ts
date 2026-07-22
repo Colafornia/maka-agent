@@ -94,6 +94,8 @@ interface FakeOptions {
   verifierOutcome?: Record<string, unknown> | null;
   trialResult?: Record<string, unknown>;
   makaTrace?: boolean;
+  taskRunTrace?: boolean;
+  combinedTrace?: boolean;
   captured?: { config?: Record<string, unknown>; request?: HarborRunRequest };
 }
 
@@ -188,6 +190,34 @@ function fakeRunner(opts: FakeOptions): HarborProcessRunner {
         'utf8',
       );
     }
+    if (opts.taskRunTrace) {
+      await mkdir(
+        join(trialDir, 'agent', 'maka-task-run', 'runs', 'sessions', 'sess', 'runs', 'run'),
+        { recursive: true },
+      );
+      await writeFile(
+        join(
+          trialDir,
+          'agent',
+          'maka-task-run',
+          'runs',
+          'sessions',
+          'sess',
+          'runs',
+          'run',
+          'events.jsonl',
+        ),
+        '{"type":"task_run_tool_failed"}\n',
+        'utf8',
+      );
+    }
+    if (opts.combinedTrace) {
+      await writeFile(
+        join(trialDir, 'agent', 'trace-events.jsonl'),
+        '{"type":"first_invocation"}\n{"type":"second_invocation"}\n',
+        'utf8',
+      );
+    }
     return {
       exitCode: opts.exitCodeAfterArtifacts ?? 0,
       stdout: opts.exitCodeAfterArtifacts ? '' : 'ok',
@@ -248,6 +278,74 @@ describe('createHarborTaskRunner', () => {
         /run-1\/round-1\/task-1\/trial\/cobol-modernization__t1\/agent\/maka-storage\/sessions\/sess\/runs\/run\/events\.jsonl$/,
       );
       assert.doesNotMatch(output.cell.traceEventsPath ?? '', /^\/logs\//);
+    });
+  });
+
+  test('uses the task-run trace when the cell stores sessions under its task-run root', async () => {
+    await withRun(async ({ jobsDir, repo, keyFile }) => {
+      const runner = createHarborTaskRunner({
+        makaRepoPath: repo,
+        jobsDir,
+        model: 'deepseek/deepseek-v4-flash',
+        provider: 'deepseek',
+        apiKeyFile: keyFile,
+        agentEnv: { MAKA_HARBOR_MODE: 'task-run' },
+        runHarbor: fakeRunner({ reward: '1\n', makaTrace: false, taskRunTrace: true }),
+      });
+
+      const output = await runner(runInput());
+      assert.match(
+        output.cell.traceEventsPath ?? '',
+        /agent\/maka-task-run\/runs\/sessions\/sess\/runs\/run\/events\.jsonl$/,
+      );
+      assert.equal(
+        await readFile(output.cell.traceEventsPath ?? '', 'utf8'),
+        '{"type":"task_run_tool_failed"}\n',
+      );
+    });
+  });
+
+  test('prefers the complete task-run trace over a last-invocation trace', async () => {
+    await withRun(async ({ jobsDir, repo, keyFile }) => {
+      const runner = createHarborTaskRunner({
+        makaRepoPath: repo,
+        jobsDir,
+        model: 'deepseek/deepseek-v4-flash',
+        provider: 'deepseek',
+        apiKeyFile: keyFile,
+        agentEnv: { MAKA_HARBOR_MODE: 'task-run' },
+        runHarbor: fakeRunner({ reward: '1\n', taskRunTrace: true, combinedTrace: true }),
+      });
+
+      const output = await runner(runInput());
+      assert.match(output.cell.traceEventsPath ?? '', /agent\/trace-events\.jsonl$/);
+      assert.equal(
+        await readFile(output.cell.traceEventsPath ?? '', 'utf8'),
+        '{"type":"first_invocation"}\n{"type":"second_invocation"}\n',
+      );
+    });
+  });
+
+  test('cell mode ignores stale task-run traces', async () => {
+    await withRun(async ({ jobsDir, repo, keyFile }) => {
+      const runner = createHarborTaskRunner({
+        makaRepoPath: repo,
+        jobsDir,
+        model: 'deepseek/deepseek-v4-flash',
+        provider: 'deepseek',
+        apiKeyFile: keyFile,
+        runHarbor: fakeRunner({ reward: '1\n', taskRunTrace: true, combinedTrace: true }),
+      });
+
+      const output = await runner(runInput());
+      assert.match(
+        output.cell.traceEventsPath ?? '',
+        /agent\/maka-storage\/sessions\/sess\/runs\/run\/events\.jsonl$/,
+      );
+      assert.equal(
+        await readFile(output.cell.traceEventsPath ?? '', 'utf8'),
+        '{"type":"tool_failed"}\n',
+      );
     });
   });
 
@@ -381,7 +479,7 @@ describe('createHarborTaskRunner', () => {
       );
       assert.equal(harborEnv?.MAKA_HOST_REPO_ROOT, repo);
       assert.equal(harborEnv?.MAKA_HOST_API_KEY_FILE, keyFile);
-      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, 'DEEPSEEK_API_KEY');
+      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, undefined);
       assert.equal(harborEnv?.MAKA_HOST_BASE_URL, 'https://api.deepseek.com');
       assert.deepEqual(config.tasks, [{ path: '/tasks/cobol-modernization', overwrite: false }]);
     });
@@ -413,7 +511,7 @@ describe('createHarborTaskRunner', () => {
       assert.equal(discoveryAuthorization, 'Bearer gho_account-token');
       assert.equal(harborEnv?.MAKA_HOST_API_KEY, 'gho_account-token');
       assert.equal(harborEnv?.MAKA_HOST_API_KEY_FILE, undefined);
-      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, 'COPILOT_GITHUB_TOKEN');
+      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, undefined);
       assert.equal(harborEnv?.MAKA_HOST_BASE_URL, 'https://api.githubcopilot.com');
       assert.equal(harborEnv?.MAKA_HOST_MODEL_API_PROTOCOL, 'openai-responses');
     });
@@ -879,7 +977,7 @@ describe('createHarborTaskRunner', () => {
 
       await runner(runInput());
 
-      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, 'SILICONFLOW_API_KEY');
+      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, undefined);
       assert.equal(harborEnv?.MAKA_HOST_BASE_URL, 'https://api.siliconflow.cn/v1');
       const agent = (captured.config!.agents as Array<{ env: Record<string, string> }>)[0]!;
       assert.equal(agent.env.SILICONFLOW_BASE_URL, undefined);
@@ -905,7 +1003,7 @@ describe('createHarborTaskRunner', () => {
 
       await runner(runInput());
 
-      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, 'AI_GATEWAY_API_KEY');
+      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, undefined);
       assert.equal(harborEnv?.MAKA_HOST_BASE_URL, 'https://ai-gateway.vercel.sh/v1');
       const agent = (captured.config!.agents as Array<{ env: Record<string, string> }>)[0]!;
       assert.equal(agent.env.AI_GATEWAY_BASE_URL, undefined);
@@ -938,7 +1036,7 @@ describe('createHarborTaskRunner', () => {
       assert.equal(agentEnv.CLOUDFLARE_ACCOUNT_ID, 'account-123');
       assert.equal(agentEnv.CLOUDFLARE_API_KEY, undefined);
       assert.equal(agentEnv.CLOUDFLARE_API_KEY_FILE, undefined);
-      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, 'CLOUDFLARE_API_KEY');
+      assert.equal(harborEnv?.MAKA_HOST_API_KEY_ENV_NAME, undefined);
       assert.equal(
         harborEnv?.MAKA_HOST_BASE_URL,
         'https://api.cloudflare.com/client/v4/accounts/account-123/ai/v1',
@@ -1900,6 +1998,47 @@ describe('buildHarborJobConfig', () => {
           agentEnv: { DEEPSEEK_API_KEY: 'raw-secret' },
         }),
       /agentEnv must not contain provider secrets: DEEPSEEK_API_KEY/,
+    );
+  });
+
+  test('rejects token-shaped provider secrets from an unrelated provider', () => {
+    assert.throws(
+      () =>
+        buildHarborJobConfig(runInput(), {
+          makaRepoPath: '/repo',
+          jobsDir: '/jobs/x',
+          jobName: 'trial',
+          model: 'deepseek/deepseek-v4-flash',
+          provider: 'deepseek',
+          agentEnv: {
+            MAKA_API_KEY: 'generic-secret',
+            MAKA_HOST_API_KEY: 'host-secret',
+            MAKA_HOST_API_KEY_FILE: '/tmp/host-secret',
+            OPENAI_CODEX_OAUTH_TOKEN: 'codex-secret',
+            GH_TOKEN: 'github-secret',
+            HF_TOKEN: 'huggingface-secret',
+          },
+        }),
+      /agentEnv must not contain provider secrets: GH_TOKEN, HF_TOKEN, MAKA_API_KEY, MAKA_HOST_API_KEY, MAKA_HOST_API_KEY_FILE, OPENAI_CODEX_OAUTH_TOKEN/,
+    );
+  });
+
+  test('rejects secret-shaped env even when no provider registry entry owns it', () => {
+    assert.throws(
+      () =>
+        buildHarborJobConfig(runInput(), {
+          makaRepoPath: '/repo',
+          jobsDir: '/jobs/x',
+          jobName: 'trial',
+          model: 'deepseek/deepseek-v4-flash',
+          provider: 'deepseek',
+          agentEnv: {
+            ACME_API_KEY: 'unregistered-secret',
+            GOOGLE_APPLICATION_CREDENTIALS: '/tmp/google-credentials.json',
+            PGPASSWORD: 'postgres-secret',
+          },
+        }),
+      /agentEnv must not contain provider secrets: ACME_API_KEY, GOOGLE_APPLICATION_CREDENTIALS, PGPASSWORD/,
     );
   });
 
