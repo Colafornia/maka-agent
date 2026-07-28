@@ -6700,11 +6700,18 @@ describe('Maka Pi TUI runner', () => {
 
     await waitFor(() => plainTerminalOutput(terminal.output()).includes('Context'));
     const out = plainTerminalOutput(terminal.output()).replace(/\s+/g, ' ');
-    assert.match(out, /anthropic \/ claude-test/);
-    assert.match(out, /40 tokens \(provider-reported\)/);
-    assert.match(out, /200 tokens \(request-model snapshot\)/);
-    assert.match(out, /System instructions: ≈100 tokens/);
-    assert.match(out, /Compaction: history pre-turn/);
+    assert.match(
+      out,
+      /Context Latest completed request anthropic · claude-test Usage Used: 40 tokens provider-reported Total: 200 tokens request-model snapshot Free: 160 tokens calculated Share: 20% calculated/,
+    );
+    assert.match(
+      out,
+      /Estimated breakdown System instructions: ≈100 tokens Tool definitions: ≈200 tokens Messages: ≈300 tokens/,
+    );
+    assert.match(
+      out,
+      /History compaction pre-turn · 12 events \/ 3 turns ≈77 tokens · local estimate/,
+    );
     assert.deepEqual(driver.prompts, []);
     assert.equal(driver.contextDiagnosticsRequests, 1);
     assert.equal(
@@ -6723,9 +6730,17 @@ describe('Maka Pi TUI runner', () => {
     ]);
   });
 
-  test('/context shows an explicit empty state before any completed request', async () => {
+  test('/context labels unavailable request diagnostics', async () => {
     const terminal = new FakeTerminal();
+    Object.defineProperty(terminal, 'columns', { value: 36 });
     const driver = new SlashCommandDriver();
+    driver.contextDiagnostics = {
+      status: 'available',
+      providerId: 'anthropic',
+      modelId: 'claude-test',
+      completedAt: 20,
+      segments: [],
+    };
     const run = runMakaPiTui({
       title: 'Maka',
       driver,
@@ -6739,10 +6754,21 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('/context');
     terminal.input('\r');
 
-    await waitFor(() =>
-      plainTerminalOutput(terminal.output()).includes(
-        'No completed provider request exists for this session.',
-      ),
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('provider report missing'));
+    const out = plainTerminalOutput(terminal.output()).replace(/\s+/g, ' ');
+    assert.match(
+      out,
+      /Usage Used: unavailable provider report missing Total: unavailable request-model snapshot missing Free: unavailable requires Used and Total Share: unavailable requires Used and Total/,
+    );
+    assert.match(
+      out,
+      /Estimated breakdown Unavailable no captured request segments History compaction Unavailable for this request/,
+    );
+    assert.equal(
+      plainTerminalOutput(terminal.screenOutput())
+        .split(/\r?\n/)
+        .every((line) => visibleWidth(line) <= terminal.columns),
+      true,
     );
     assert.deepEqual(driver.prompts, []);
 
@@ -6753,6 +6779,51 @@ describe('Maka Pi TUI runner', () => {
         throw new Error('TUI did not close during test cleanup');
       }),
     ]);
+  });
+
+  test('/context explains why diagnostics are unavailable', async () => {
+    const cases: Array<{
+      reason: 'no_completed_request' | 'trace_unavailable';
+      message: string;
+    }> = [
+      {
+        reason: 'no_completed_request',
+        message: 'No completed provider request exists for this session.',
+      },
+      {
+        reason: 'trace_unavailable',
+        message: 'Provider request trace data could not be read.',
+      },
+    ];
+
+    for (const { reason, message } of cases) {
+      const terminal = new FakeTerminal();
+      const driver = new SlashCommandDriver();
+      driver.contextDiagnostics = { status: 'unavailable', reason };
+      const run = runMakaPiTui({
+        title: 'Maka',
+        driver,
+        cwd: '/repo',
+        model: 'claude-sonnet-4-5',
+        connectionSlug: 'claude-subscription',
+        permissionMode: 'ask',
+        terminal,
+      });
+
+      terminal.input('/context');
+      terminal.input('\r');
+
+      await waitFor(() => plainTerminalOutput(terminal.output()).includes(message));
+      assert.deepEqual(driver.prompts, []);
+
+      exitMaka(terminal);
+      await Promise.race([
+        run,
+        delay(50).then(() => {
+          throw new Error('TUI did not close during test cleanup');
+        }),
+      ]);
+    }
   });
 
   test('/new clears the transcript and starts a fresh session', async () => {

@@ -2681,35 +2681,51 @@ function formatContextDiagnostics(diagnostics: ContextDiagnostics): string {
   }
 
   const lines = [
-    'Context — latest completed request',
-    `Request: ${diagnostics.providerId} / ${diagnostics.modelId}`,
-    diagnostics.inputTokens === undefined
-      ? 'Context used: unavailable (provider usage missing)'
-      : `Context used: ${formatContextCount(diagnostics.inputTokens)} tokens (provider-reported)`,
-    diagnostics.contextWindow === undefined
-      ? 'Context total: unavailable (window not captured for this request)'
-      : `Context total: ${formatContextCount(diagnostics.contextWindow)} tokens (request-model snapshot)`,
+    'Context',
+    'Latest completed request',
+    `${diagnostics.providerId} · ${diagnostics.modelId}`,
+    '',
+    'Usage',
   ];
+  const pushMetric = (label: string, value: string, source: string): void => {
+    lines.push(`  ${label}: ${value}`, `    ${source}`);
+  };
+  pushMetric(
+    'Used',
+    diagnostics.inputTokens === undefined
+      ? 'unavailable'
+      : `${formatContextCount(diagnostics.inputTokens)} tokens`,
+    diagnostics.inputTokens === undefined ? 'provider report missing' : 'provider-reported',
+  );
+  pushMetric(
+    'Total',
+    diagnostics.contextWindow === undefined
+      ? 'unavailable'
+      : `${formatContextCount(diagnostics.contextWindow)} tokens`,
+    diagnostics.contextWindow === undefined
+      ? 'request-model snapshot missing'
+      : 'request-model snapshot',
+  );
+
   if (diagnostics.inputTokens !== undefined && diagnostics.contextWindow !== undefined) {
     const free = Math.max(0, diagnostics.contextWindow - diagnostics.inputTokens);
     const percent = Math.round((diagnostics.inputTokens / diagnostics.contextWindow) * 100);
-    lines.push(
-      `Context free: ${formatContextCount(free)} tokens (derived)`,
-      `Context used: ${percent}% (derived)`,
-    );
+    pushMetric('Free', `${formatContextCount(free)} tokens`, 'calculated');
+    pushMetric('Share', `${percent}%`, 'calculated');
   } else {
-    lines.push('Context free and percentage: unavailable');
+    pushMetric('Free', 'unavailable', 'requires Used and Total');
+    pushMetric('Share', 'unavailable', 'requires Used and Total');
   }
 
-  lines.push('Breakdown (local estimates from serialized request bytes)');
+  lines.push('', 'Estimated breakdown');
   if (diagnostics.segments.length === 0) {
-    lines.push('  unavailable (no captured request segments)');
+    lines.push('  Unavailable', '    no captured request segments');
   } else {
     const labels: Record<(typeof diagnostics.segments)[number]['kind'], string> = {
       system_instructions: 'System instructions',
       tool_definitions: 'Tool definitions',
       messages: 'Messages',
-      other: 'Other request options',
+      other: 'Other options',
     };
     for (const segment of diagnostics.segments) {
       lines.push(
@@ -2721,10 +2737,13 @@ function formatContextDiagnostics(diagnostics: ContextDiagnostics): string {
   if (diagnostics.compaction) {
     const compaction = diagnostics.compaction;
     lines.push(
-      `Compaction: history ${compaction.phase.replace('_', '-')} · ${formatContextCount(compaction.eventCount)} events / ${formatContextCount(compaction.turnCount)} turns · ≈${formatContextCount(compaction.estimatedTokens)} tokens`,
+      '',
+      'History compaction',
+      `  ${compaction.phase.replace('_', '-')} · ${formatContextCount(compaction.eventCount)} events / ${formatContextCount(compaction.turnCount)} turns`,
+      `  ≈${formatContextCount(compaction.estimatedTokens)} tokens · local estimate`,
     );
   } else {
-    lines.push('Compaction: unavailable for this request');
+    lines.push('', 'History compaction', '  Unavailable for this request');
   }
   return lines.join('\n');
 }
