@@ -22,6 +22,7 @@ import {
 import {
   GoalManager,
   SessionActivityRegistry,
+  type ContextDiagnostics,
   type GoalTurnOutcome,
   type ShellRunUpdate,
 } from '@maka/runtime';
@@ -6660,6 +6661,100 @@ describe('Maka Pi TUI runner', () => {
     ]);
   });
 
+  test('/context renders persisted request diagnostics without preparing a model turn', async () => {
+    const terminal = new FakeTerminal();
+    Object.defineProperty(terminal, 'columns', { value: 36 });
+    const driver = new SlashCommandDriver();
+    driver.contextDiagnostics = {
+      status: 'available',
+      providerId: 'anthropic',
+      modelId: 'claude-test',
+      completedAt: 20,
+      inputTokens: 40,
+      contextWindow: 200,
+      segments: [
+        { kind: 'system_instructions', bytes: 400, estimatedTokens: 100 },
+        { kind: 'tool_definitions', bytes: 800, estimatedTokens: 200 },
+        { kind: 'messages', bytes: 1_200, estimatedTokens: 300 },
+      ],
+      compaction: {
+        kind: 'history',
+        phase: 'pre_turn',
+        eventCount: 12,
+        turnCount: 3,
+        estimatedTokens: 77,
+      },
+    };
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('/context');
+    terminal.input('\r');
+
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('Context'));
+    const out = plainTerminalOutput(terminal.output()).replace(/\s+/g, ' ');
+    assert.match(out, /anthropic \/ claude-test/);
+    assert.match(out, /40 tokens \(provider-reported\)/);
+    assert.match(out, /200 tokens \(request-model snapshot\)/);
+    assert.match(out, /System instructions: ≈100 tokens/);
+    assert.match(out, /Compaction: history pre-turn/);
+    assert.deepEqual(driver.prompts, []);
+    assert.equal(driver.contextDiagnosticsRequests, 1);
+    assert.equal(
+      plainTerminalOutput(terminal.screenOutput())
+        .split(/\r?\n/)
+        .every((line) => visibleWidth(line) <= terminal.columns),
+      true,
+    );
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
+  test('/context shows an explicit empty state before any completed request', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('/context');
+    terminal.input('\r');
+
+    await waitFor(() =>
+      plainTerminalOutput(terminal.output()).includes(
+        'No completed provider request exists for this session.',
+      ),
+    );
+    assert.deepEqual(driver.prompts, []);
+
+    exitMaka(terminal);
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close during test cleanup');
+      }),
+    ]);
+  });
+
   test('/new clears the transcript and starts a fresh session', async () => {
     const terminal = new FakeTerminal();
     const driver = new SlashCommandDriver([
@@ -9919,6 +10014,11 @@ class SlashCommandDriver implements MakaSessionDriver {
   readonly moves: string[] = [];
   startNewSessionCalls = 0;
   resumeCalls = 0;
+  contextDiagnosticsRequests = 0;
+  contextDiagnostics: ContextDiagnostics = {
+    status: 'unavailable',
+    reason: 'no_completed_request',
+  };
   protected sessionId = 'session-1';
   protected orchestrationMode: OrchestrationMode = 'default';
 
@@ -9929,6 +10029,11 @@ class SlashCommandDriver implements MakaSessionDriver {
 
   async listSessions(): Promise<SessionSummary[]> {
     return this.sessions;
+  }
+
+  async getContextDiagnostics(): Promise<ContextDiagnostics> {
+    this.contextDiagnosticsRequests += 1;
+    return this.contextDiagnostics;
   }
 
   preparePrompt(

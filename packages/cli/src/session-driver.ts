@@ -18,7 +18,11 @@ import type { OrchestrationMode } from '@maka/core/orchestration';
 import type { SessionSummary, StoredMessage } from '@maka/core/session';
 import { userFacingText } from '@maka/core/session';
 import type { ThinkingLevel } from '@maka/core/model-thinking';
-import type { RuntimeContinuation, SafeBoundaryContinuationPlan } from '@maka/runtime';
+import type {
+  ContextDiagnostics,
+  RuntimeContinuation,
+  SafeBoundaryContinuationPlan,
+} from '@maka/runtime';
 import { DEFAULT_SESSION_NAME } from '@maka/core';
 
 const execFileAsync = promisify(execFile);
@@ -37,6 +41,7 @@ export interface MakaSessionRuntime {
   listSessions(): Promise<SessionSummary[]>;
   readExecutionBoundary(sessionId: string): Promise<ExecutionBoundary>;
   getMessages(sessionId: string): Promise<StoredMessage[]>;
+  getContextDiagnostics?(sessionId: string): Promise<ContextDiagnostics>;
   sendMessage(sessionId: string, input: UserMessageInput): AsyncIterable<SessionEvent>;
   compactSession(sessionId: string, input?: { turnId?: string }): AsyncIterable<SessionEvent>;
   planLatestAuthoritativeSafeBoundaryContinuation?(
@@ -169,6 +174,7 @@ export interface MakaSessionDriver {
   startNewSession(): void;
   stop(): Promise<void>;
   getSessionId(): string | null;
+  getContextDiagnostics?(): Promise<ContextDiagnostics>;
   getOrchestrationMode?(): OrchestrationMode;
 }
 
@@ -241,6 +247,14 @@ class RuntimeMakaSessionDriver implements MakaSessionDriver {
   async *compactSession(): AsyncIterable<SessionEvent> {
     if (!this.sessionId) throw new Error('Cannot compact before a session starts.');
     yield* this.input.runtime.compactSession(this.sessionId, { turnId: this.newId() });
+  }
+
+  async getContextDiagnostics(): Promise<ContextDiagnostics> {
+    if (!this.sessionId) return { status: 'unavailable', reason: 'no_completed_request' };
+    const read = this.input.runtime.getContextDiagnostics;
+    return read
+      ? read.call(this.input.runtime, this.sessionId)
+      : { status: 'unavailable', reason: 'trace_unavailable' };
   }
 
   async *resumeLatest(): AsyncIterable<SessionEvent> {

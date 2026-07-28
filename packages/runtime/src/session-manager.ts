@@ -120,6 +120,7 @@ import type {
   ProviderRequestAttemptRecord,
   ProviderRequestCaptureLedgerRecord,
 } from './provider-request-telemetry.js';
+import { readLatestContextDiagnostics, type ContextDiagnostics } from './context-diagnostics.js';
 import type { ShellRunProcessManager } from './shell-run-manager.js';
 import type { ActiveFullCompactBlock } from './active-full-compact.js';
 import type { SemanticCompactBlock } from './semantic-compact.js';
@@ -797,6 +798,13 @@ export class SessionManager {
 
   async getMessages(sessionId: string): Promise<StoredMessage[]> {
     return (await this.getSessionView(sessionId)).messages;
+  }
+
+  async getContextDiagnostics(sessionId: string): Promise<ContextDiagnostics> {
+    const runStore = this.deps.runStore;
+    return runStore
+      ? readLatestContextDiagnostics(runStore, sessionId)
+      : { status: 'unavailable', reason: 'trace_unavailable' };
   }
 
   async listTurns(sessionId: string): Promise<TurnRecord[]> {
