@@ -35,6 +35,38 @@ test('reads the latest completed provider request instead of a later failed atte
   });
 });
 
+test('ignores non-inline child runs when reading session context', async () => {
+  const store = runStore([
+    {
+      header: runHeader('run-parent', 1),
+      events: [
+        checkpointEvent('run-parent', 5, 12, 3, 77),
+        attemptEvent('run-parent', 'attempt-parent', 10, 'completed', 'model-parent', 40, 200),
+      ],
+    },
+    {
+      header: { ...runHeader('run-child', 2), parentRunId: 'run-parent' },
+      events: [
+        checkpointEvent('run-child', 8, 99, 9, 999),
+        attemptEvent('run-child', 'attempt-child', 20, 'completed', 'model-child', 50, 500),
+      ],
+    },
+  ]);
+
+  const diagnostics = await readLatestContextDiagnostics(store, 'session-1');
+
+  assert.equal(diagnostics.status, 'available');
+  if (diagnostics.status !== 'available') return;
+  assert.equal(diagnostics.modelId, 'model-parent');
+  assert.deepEqual(diagnostics.compaction, {
+    kind: 'history',
+    phase: 'pre_turn',
+    eventCount: 12,
+    turnCount: 3,
+    estimatedTokens: 77,
+  });
+});
+
 test('groups the completed request segments into explicit local estimates', async () => {
   const store = runStore([
     {

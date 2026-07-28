@@ -1,4 +1,4 @@
-import type { AgentRunStore } from '@maka/core';
+import { isSessionInlineRun, type AgentRunStore } from '@maka/core';
 import {
   validateHistoryCompactCheckpointShape,
   type HistoryCompactCheckpoint,
@@ -42,7 +42,7 @@ export async function readLatestContextDiagnostics(
 ): Promise<ContextDiagnostics> {
   try {
     // ponytail: command-time O(session ledger); add a completed-attempt projection if measured.
-    const runs = await runStore.listSessionRuns(sessionId);
+    const runs = (await runStore.listSessionRuns(sessionId)).filter(isSessionInlineRun);
     let latestCompleted: { ts: number; attempt: AttemptCandidate | undefined } | undefined;
     const checkpoints: CheckpointCandidate[] = [];
     for (const run of runs) {
