@@ -20,11 +20,11 @@
 
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import type { UiLocale } from '@maka/core';
 import { openSystemPermissionPane } from '../permissions-actions.js';
 import { resolveAppBundle } from './app-bundle.js';
+import { resolvePermissionOverlayAssetDir } from './permission-overlay-path.js';
 import { getPermissionOverlayCopy } from './permission-overlay-copy.js';
 import {
   createPermissionOverlayController,
@@ -35,8 +35,6 @@ import {
 } from './permission-overlay-controller.js';
 
 const requireElectron = createRequire(import.meta.url);
-const here = dirname(fileURLToPath(import.meta.url));
-
 /**
  * Card geometry, in DIP: a wide, short bar rather than a dialog.
  *
@@ -48,11 +46,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const CARD = { width: 530, height: 109 };
 
 type Electron = typeof import('electron');
-
-function overlayAssetDir(): string {
-  // dist/main/permission-overlay -> dist/overlay
-  return join(here, '..', '..', 'overlay');
-}
 
 export interface PermissionOverlayMainDeps {
   /**
@@ -68,7 +61,6 @@ export function createPermissionOverlayMain(
   deps: PermissionOverlayMainDeps,
 ): PermissionOverlayController {
   let locale: UiLocale = 'en';
-  let iconDataUrl: string | null = null;
   const electron = requireElectron('electron') as Electron;
   const { BrowserWindow, app, screen, systemPreferences } = electron;
 
@@ -78,20 +70,6 @@ export function createPermissionOverlayMain(
     // on every poll tick.
     if (id === 'accessibility') return systemPreferences.isTrustedAccessibilityClient(false);
     return systemPreferences.getMediaAccessStatus('screen') === 'granted';
-  }
-
-  async function resolveAppIconDataUrl(bundlePath: string | null): Promise<string | null> {
-    if (!bundlePath) return null;
-    try {
-      // nativeImage.createFromPath does not decode .icns reliably. Asking
-      // macOS for the bundle icon returns the same image Finder and the TCC
-      // list display, and works for both Maka.app and Electron.app in dev.
-      const icon = await app.getFileIcon(bundlePath, { size: 'large' });
-      if (icon.isEmpty()) return null;
-      return icon.resize({ width: 64, height: 64 }).toDataURL();
-    } catch {
-      return null;
-    }
   }
 
   const controller = createPermissionOverlayController({
@@ -121,7 +99,6 @@ export function createPermissionOverlayMain(
       return {
         permission: id,
         appName: app.getName(),
-        iconDataUrl,
         draggable: bundlePath !== null,
         copy: serializeCopy(locale, id, app.getName()),
       };
@@ -147,7 +124,7 @@ export function createPermissionOverlayMain(
         focusable: false,
         type: process.platform === 'darwin' ? 'panel' : undefined,
         webPreferences: {
-          preload: join(overlayAssetDir(), 'permission-overlay-preload.cjs'),
+          preload: join(resolvePermissionOverlayAssetDir(), 'permission-overlay-preload.cjs'),
           nodeIntegration: false,
           contextIsolation: true,
           // Matches the cursor overlay. The preload only needs
@@ -166,7 +143,7 @@ export function createPermissionOverlayMain(
       // Survives Space switches and Settings going fullscreen; without it
       // the card is hidden with our other windows when Settings activates.
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      void win.loadFile(join(overlayAssetDir(), 'permission-overlay.html'));
+      void win.loadFile(join(resolvePermissionOverlayAssetDir(), 'permission-overlay.html'));
 
       const like: PermissionOverlayWindowLike = {
         setBounds: (next) => { if (!win.isDestroyed()) win.setBounds(next); },
@@ -195,12 +172,6 @@ export function createPermissionOverlayMain(
       } catch (error) {
         console.warn('[permission-overlay] locale lookup failed, keeping', locale, error);
       }
-      const bundle = resolveAppBundle({
-        executablePath: app.getPath('exe'),
-        platform: process.platform,
-        exists: existsSync,
-      });
-      iconDataUrl = await resolveAppIconDataUrl(bundle.ok ? bundle.bundlePath : null);
       return controller.start(id);
     },
   };
@@ -281,9 +252,10 @@ function attachCardGestures(win: import('electron').BrowserWindow): void {
       if (!fromRenderer.isEmpty()) icon = fromRenderer;
     }
     if (icon.isEmpty()) {
+      // app.getFileIcon crashes on ad-hoc signed Electron.app (macOS 26);
+      // use the static overlay icon instead.
       try {
-        const fallback = await app.getFileIcon(resolved.bundlePath, { size: 'large' });
-        if (!fallback.isEmpty()) icon = fallback.resize({ width: 64, height: 64 });
+        icon = nativeImage.createFromPath(join(resolvePermissionOverlayAssetDir(), 'app-icon.png')).resize({ width: 64, height: 64 });
       } catch {
         // The file drag still works without a decorative drag image.
       }

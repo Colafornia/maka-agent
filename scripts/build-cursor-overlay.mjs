@@ -117,6 +117,7 @@ export async function buildPermissionOverlay({ logLevel = 'info' } = {}) {
     join(srcOverlay, 'permission-overlay.html'),
     join(outDir, 'permission-overlay.html'),
   );
+  await copyFile(join(desktop, 'assets', 'icon.png'), join(outDir, 'app-icon.png'));
   return outDir;
 }
 
