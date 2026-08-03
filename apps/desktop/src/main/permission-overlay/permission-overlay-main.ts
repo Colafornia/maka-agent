@@ -20,11 +20,11 @@
 
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import type { UiLocale } from '@maka/core';
 import { openSystemPermissionPane, requestPermissionAccess } from '../permissions-actions.js';
 import { loadNativeBundleIcon, resolveAppBundle } from './app-bundle.js';
+import { resolvePermissionOverlayAssetDir } from './permission-overlay-path.js';
 import { getPermissionOverlayCopy } from './permission-overlay-copy.js';
 import {
   createPermissionOverlayController,
@@ -36,8 +36,6 @@ import {
 } from './permission-overlay-controller.js';
 
 const requireElectron = createRequire(import.meta.url);
-const here = dirname(fileURLToPath(import.meta.url));
-
 /**
  * Card geometry, in DIP: a wide, short bar rather than a dialog.
  *
@@ -49,11 +47,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const CARD = { width: 530, height: 109 };
 
 type Electron = typeof import('electron');
-
-function overlayAssetDir(): string {
-  // dist/main/permission-overlay -> dist/overlay
-  return join(here, '..', '..', 'overlay');
-}
 
 export interface PermissionOverlayMainDeps {
   /**
@@ -146,7 +139,7 @@ export function createPermissionOverlayMain(
         focusable: false,
         type: process.platform === 'darwin' ? 'panel' : undefined,
         webPreferences: {
-          preload: join(overlayAssetDir(), 'permission-overlay-preload.cjs'),
+          preload: join(resolvePermissionOverlayAssetDir(), 'permission-overlay-preload.cjs'),
           nodeIntegration: false,
           contextIsolation: true,
           // Matches the cursor overlay. The preload only needs
@@ -165,7 +158,7 @@ export function createPermissionOverlayMain(
       // Survives Space switches and Settings going fullscreen; without it
       // the card is hidden with our other windows when Settings activates.
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      void win.loadFile(join(overlayAssetDir(), 'permission-overlay.html'));
+      void win.loadFile(join(resolvePermissionOverlayAssetDir(), 'permission-overlay.html'));
 
       const like: PermissionOverlayWindowLike = {
         setBounds: (next) => { if (!win.isDestroyed()) win.setBounds(next); },
