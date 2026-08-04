@@ -22,9 +22,9 @@ import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { UiLocale } from '@maka/core';
+import { resolveOverlayAssetDir } from '../overlay-assets.js';
 import { openSystemPermissionPane, requestPermissionAccess } from '../permissions-actions.js';
 import { loadNativeBundleIcon, resolveAppBundle } from './app-bundle.js';
-import { resolvePermissionOverlayAssetDir } from './permission-overlay-path.js';
 import { getPermissionOverlayCopy } from './permission-overlay-copy.js';
 import {
   createPermissionOverlayController,
@@ -61,6 +61,7 @@ export interface PermissionOverlayMainDeps {
 export function createPermissionOverlayMain(
   deps: PermissionOverlayMainDeps,
 ): PermissionOverlayController {
+  const overlayAssetDir = resolveOverlayAssetDir(import.meta.url);
   let locale: UiLocale = 'en';
   let iconDataUrl: string | null = null;
   const electron = requireElectron('electron') as Electron;
@@ -139,7 +140,7 @@ export function createPermissionOverlayMain(
         focusable: false,
         type: process.platform === 'darwin' ? 'panel' : undefined,
         webPreferences: {
-          preload: join(resolvePermissionOverlayAssetDir(), 'permission-overlay-preload.cjs'),
+          preload: join(overlayAssetDir, 'permission-overlay-preload.cjs'),
           nodeIntegration: false,
           contextIsolation: true,
           // Matches the cursor overlay. The preload only needs
@@ -158,7 +159,7 @@ export function createPermissionOverlayMain(
       // Survives Space switches and Settings going fullscreen; without it
       // the card is hidden with our other windows when Settings activates.
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      void win.loadFile(join(resolvePermissionOverlayAssetDir(), 'permission-overlay.html'));
+      void win.loadFile(join(overlayAssetDir, 'permission-overlay.html'));
 
       const like: PermissionOverlayWindowLike = {
         setBounds: (next) => { if (!win.isDestroyed()) win.setBounds(next); },
