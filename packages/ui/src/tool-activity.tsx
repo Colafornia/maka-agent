@@ -246,6 +246,15 @@ export function ToolTrow({
   );
 }
 
+/** Whether a visible, collapsed ChatToolCalls row owns the active spinner. */
+export function toolTrowHasVisibleSpinner(items: readonly ToolActivityItem[]): boolean {
+  return items.some((item, index) =>
+    !isLinkedAgentResult(item.result)
+    && isInFlightToolStatus(item.status)
+    && (index === items.length - 1 || isLinkedAgentResult(items[index + 1]?.result)),
+  );
+}
+
 type LinkedAgentRow = {
   key: string;
   name: string;
@@ -362,6 +371,7 @@ function linkedAgentRows(
   locale: UiLocale,
 ): LinkedAgentRow[] | undefined {
   const result = item.result;
+  if (!isLinkedAgentResult(result)) return undefined;
   if (result?.kind === 'subagent') {
     const name = redactSecrets(result.agentName.trim()) || resolveToolDisplayName(item, locale);
     return [{
@@ -377,8 +387,6 @@ function linkedAgentRows(
       childSessionId: result.childSessionId,
     }];
   }
-  if (result?.kind !== 'agent_swarm') return undefined;
-  if (result.items.length === 0) return undefined;
   return result.items.map((child) => {
     const name = redactSecrets((child.agentName || child.itemId).trim()) || child.profile;
     return {
@@ -392,6 +400,13 @@ function linkedAgentRows(
       childSessionId: child.childSessionId,
     } satisfies LinkedAgentRow;
   });
+}
+
+function isLinkedAgentResult(
+  result: ToolActivityItem['result'],
+): result is Extract<ToolResultContent, { kind: 'subagent' | 'agent_swarm' }> {
+  return result?.kind === 'subagent'
+    || (result?.kind === 'agent_swarm' && result.items.length > 0);
 }
 
 type LinkedAgentStatus = Extract<ToolResultContent, { kind: 'subagent' }>['status'];
