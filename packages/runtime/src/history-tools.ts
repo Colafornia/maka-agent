@@ -24,6 +24,7 @@ import {
   normalizeSearchLimit,
   normalizeSearchQuery,
   type SearchError,
+  type SearchResult,
   type ThreadSearchMatchKind,
 } from '@maka/core/search';
 import { collapseSessionRevisions } from '@maka/core/session-revisions';
@@ -57,6 +58,25 @@ type HistoryReadErrorReason =
   | 'turn_not_found'
   | 'empty_transcript'
   | 'aborted';
+
+function historySearchSummary(row: SearchResult): string {
+  switch (row.target?.matchKind) {
+    case 'session_title':
+      return 'Session title';
+    case 'user_message':
+      return 'User message';
+    case 'assistant_message':
+      return 'Assistant response';
+    case 'tool_intent': {
+      const tool = row.target.tool;
+      return `Tool call: ${redactSecrets(tool?.name ?? 'unknown')}`;
+    }
+    case 'tool_result':
+      return row.target.toolResultIsError ? 'Tool result: Failed' : 'Tool result: Succeeded';
+    default:
+      return redactSecrets(row.summary ?? '');
+  }
+}
 
 interface HistoryTurnMessage {
   readonly messageId: string;
@@ -178,7 +198,7 @@ export function buildSearchHistoryTool(deps: HistoryToolDeps): MakaTool {
                 : {}),
               is_current_session: row.target.sessionId === context.sessionId,
               title: row.title,
-              summary: redactSecrets(row.summary ?? ''),
+              summary: historySearchSummary(row),
               snippet: row.snippet ?? '',
               ...(session?.lastMessageAt !== undefined
                 ? { last_message_at: session.lastMessageAt }

@@ -43,7 +43,7 @@ test('fixture-seeded transcripts return content hits with turn ids', async ({
       hit.target?.kind === 'thread' &&
       hit.target.turnId === 'turn-prompt-rail-3',
   );
-  expect(content?.summary).toBe('用户消息');
+  expect(content?.summary).toBeUndefined();
   if (!content || content.target?.kind !== 'thread') {
     throw new Error(`expected a thread search hit, got ${JSON.stringify(content)}`);
   }
@@ -53,5 +53,6 @@ test('fixture-seeded transcripts return content hits with turn ids', async ({
     sessionId: desktopSessionKey({ hostId, sessionId: PROMPT_RAIL_SESSION_ID }),
     turnId: 'turn-prompt-rail-3',
     sequence: 4,
+    matchKind: 'user_message',
   });
 });
