@@ -43,7 +43,7 @@ test('fixture-seeded transcripts return content hits with turn ids', async ({
       hit.target?.kind === 'thread' &&
       hit.target.turnId === 'turn-prompt-rail-3',
   );
-  expect(content?.summary).toBeUndefined();
+  expect(content?.summary).toBe('用户消息');
   if (!content || content.target?.kind !== 'thread') {
     throw new Error(`expected a thread search hit, got ${JSON.stringify(content)}`);
   }

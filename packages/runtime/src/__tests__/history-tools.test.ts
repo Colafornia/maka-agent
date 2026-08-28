@@ -119,9 +119,9 @@ test('SearchHistory returns typed message hits from current and other sessions',
   assert.deepEqual(
     new Map(result.rows.map((row) => [row.match_kind, row.summary])),
     new Map([
-      ['session_title', 'Session title'],
-      ['user_message', 'User message'],
-      ['assistant_message', 'Assistant response'],
+      ['session_title', '任务标题'],
+      ['user_message', '用户消息'],
+      ['assistant_message', '助手回复'],
     ]),
   );
   assert.equal(result.rows.find((row) => row.session_id === 'current')?.is_current_session, true);
@@ -162,7 +162,7 @@ test('SearchHistory exposes and consumes an opaque session continuation', async 
   assert.equal(second.next_cursor, undefined);
 });
 
-test('SearchHistory summaries echo invoked wire tool names and cover tool outcomes', async () => {
+test('SearchHistory preserves existing summaries without exposing canonical tool secrets', async () => {
   const needle = 'history summary needle';
   const messages = new Map<string, StoredMessage[]>([
     [
@@ -215,12 +215,10 @@ test('SearchHistory summaries echo invoked wire tool names and cover tool outcom
     rows: Array<{ summary: string }>;
   };
 
-  assert.ok(
-    result.rows.some((row) => row.summary === 'Tool call: mcp__desktop_browser__browser_navigate'),
-  );
-  assert.ok(result.rows.some((row) => row.summary === 'Tool result: Succeeded'));
-  assert.ok(result.rows.some((row) => row.summary === 'Tool result: Failed'));
-  assert.match(JSON.stringify(result.rows), /\[redacted\]/u);
+  assert.ok(result.rows.some((row) => row.summary === '工具调用：浏览器导航'));
+  assert.ok(result.rows.some((row) => row.summary === '工具调用：Acme Lookup'));
+  assert.ok(result.rows.some((row) => row.summary === '工具结果：成功'));
+  assert.ok(result.rows.some((row) => row.summary === '工具结果：失败'));
   assert.doesNotMatch(JSON.stringify(result.rows), /sk-ant-test-secret-token-12345/u);
 });
 

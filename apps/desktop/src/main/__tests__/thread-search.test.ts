@@ -428,7 +428,7 @@ describe('runThreadSearch', () => {
       sessionId: 's1',
       matchKind: 'session_title',
     });
-    assert.equal(titleHit.summary, undefined);
+    assert.equal(titleHit.summary, '任务标题');
     assert.equal(titleHit.url, undefined);
     assert.match(titleHit.snippet ?? '', /\[redacted\]/);
     assert.equal(titleHit.snippet?.includes('sk-ant-test-secret-token-12345'), false);
@@ -445,7 +445,7 @@ describe('runThreadSearch', () => {
       matchKind: 'user_message',
       messageTimestamp: 1_700_000_000_000,
     });
-    assert.equal(messageHit.summary, undefined);
+    assert.equal(messageHit.summary, '用户消息');
     assert.equal(messageHit.url, undefined);
   });
 

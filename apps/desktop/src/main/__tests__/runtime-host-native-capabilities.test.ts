@@ -88,6 +88,7 @@ test('publishes self-described session-affine Browser and Computer Use offers', 
 test('preserves built-in Browser labels for non-localized consumers', () => {
   const provider = createDesktopNativeCapabilityProvider({
     browserTools: buildBrowserTools(),
+    resolveBrowserUrl: () => 'https://example.com/',
     releaseBrowserSession() {},
     computerUseTools: computerTools(),
     releaseComputerUseSession() {},

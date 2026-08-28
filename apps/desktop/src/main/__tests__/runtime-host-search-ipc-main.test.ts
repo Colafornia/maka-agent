@@ -85,7 +85,7 @@ test('Runtime Host transcripts produce title and content hits with turn ids', as
       limit: 10,
     }),
   );
-  assert.equal(titleHits[0]?.summary, undefined);
+  assert.equal(titleHits[0]?.summary, '任务标题');
   assert.deepEqual(titleHits[0]?.target, {
     kind: 'thread',
     sessionId: 'searchable-session',
@@ -100,7 +100,7 @@ test('Runtime Host transcripts produce title and content hits with turn ids', as
     }),
   );
   assert.equal(contentHits.length, 1);
-  assert.equal(contentHits[0]?.summary, undefined);
+  assert.equal(contentHits[0]?.summary, '用户消息');
   assert.deepEqual(contentHits[0]?.target, {
     kind: 'thread',
     sessionId: 'searchable-session',

@@ -59,6 +59,7 @@ describe('CLI release file policy', () => {
       mcp: ['./test-only/stdio-server'],
       'runtime-host': [
         './test-only/client-capability-host',
+        './test-only/interactive-run-composer',
         './test-only/execution-candidate-e2e-main',
       ],
       runtime: ['./test-only/fake-backend', './test-only/observation-text-reader'],

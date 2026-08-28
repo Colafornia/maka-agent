@@ -279,6 +279,7 @@ export async function runThreadSearch(
       results.push({
         source: THREAD_SOURCE,
         title: searchableTitle,
+        summary: '任务标题',
         snippet,
         target: {
           kind: 'thread',
@@ -338,6 +339,7 @@ export async function runThreadSearch(
       results.push({
         source: THREAD_SOURCE,
         title: redactSecrets(session.name),
+        summary: formatSearchResultSummary(message),
         snippet,
         // PR-SEARCH-1.5: navigation target via discriminated union; no
         // `url` field for thread results (maka://session is deferred).
@@ -477,6 +479,31 @@ export function threadSearchMatchKind(message: StoredMessage): ThreadSearchMatch
     case 'workhub_coordination':
     case 'system_note':
       throw new Error(`Message type ${message.type} is not searchable`);
+  }
+}
+
+export function formatSearchResultSummary(message: StoredMessage): string {
+  switch (message.type) {
+    case 'user':
+      return '用户消息';
+    case 'assistant':
+      return '助手回复';
+    case 'tool_call':
+      return message.displayName
+        ? `工具调用：${message.displayName}`
+        : `工具调用：${message.toolName}`;
+    case 'tool_result':
+      return message.isError ? '工具结果：失败' : '工具结果：成功';
+    case 'permission_decision':
+      return '权限记录';
+    case 'token_usage':
+      return '用量记录';
+    case 'turn_state':
+      return '回合状态';
+    case 'workhub_coordination':
+      return 'WorkHub 协调记录';
+    case 'system_note':
+      return '系统记录';
   }
 }
 

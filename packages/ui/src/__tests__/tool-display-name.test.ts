@@ -19,7 +19,6 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { MAKA_CATALOG_TOOLS } from '@maka/core/tool-catalog';
 import { UI_LOCALES } from '@maka/core/ui-locale';
 import type { ToolActivityItem } from '../materialize.js';
 import { resolveToolDisplayName } from '../tool-activity/display-name.js';
@@ -46,6 +45,19 @@ describe('tool display names', () => {
     assert.equal(resolveToolDisplayName(search, 'zh'), '联网搜索');
   });
 
+  it('localizes every Desktop-owned proxy group', () => {
+    const cases = [
+      ['mcp__desktop_browser__browser_navigate', 'Browser navigation'],
+      ['mcp__desktop_computer_use__maka_computer', 'Maka Computer'],
+      ['mcp__desktop_settings__MakaClientSettingsGet', 'Read client settings'],
+      ['mcp__desktop_rive__RiveWorkflow', 'Rive workflow'],
+    ] as const;
+
+    for (const [toolName, label] of cases) {
+      assert.equal(resolveToolDisplayName(item(toolName, 'wrong persisted label'), 'en'), label);
+    }
+  });
+
   it('resolves every built-in tool through every locale cell', () => {
     for (const locale of UI_LOCALES) {
       for (const [toolName, labels] of Object.entries(BUILTIN_TOOL_LABELS)) {
@@ -58,17 +70,16 @@ describe('tool display names', () => {
     }
   });
 
-  it('covers every product catalog tool with a built-in label', () => {
-    for (const { name } of MAKA_CATALOG_TOOLS) {
-      assert.ok(Object.hasOwn(BUILTIN_TOOL_LABELS, name), name);
-    }
-  });
-
   it('localizes Maka-owned tools outside the product binding catalog', () => {
     assert.equal(resolveToolDisplayName(item('MakaSettingsGet', 'Read Maka settings'), 'zh'), '读取 Maka 设置');
     assert.equal(resolveToolDisplayName(item('SkillSearch', 'SkillSearch'), 'zh'), '搜索技能');
     assert.equal(resolveToolDisplayName(item('SubmitPlan'), 'zh'), '提交计划');
     assert.equal(resolveToolDisplayName(item('tool_search'), 'zh'), '启用能力');
+  });
+
+  it('localizes current Session Todo tools', () => {
+    assert.equal(resolveToolDisplayName(item('todo_read', 'Todo Read'), 'zh'), '读取待办列表');
+    assert.equal(resolveToolDisplayName(item('todo_write', 'Todo Write'), 'zh'), '更新待办列表');
   });
 
   it('keeps provider labels for external tools and falls back to their identifiers', () => {

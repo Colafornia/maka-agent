@@ -50,6 +50,8 @@ export const BUILTIN_TOOL_LABELS = {
   MakaSettingsUpdate: { zh: '更新 Maka 设置', en: 'Update Maka settings' },
   memory_remember: { zh: '记住信息', en: 'Remember information' },
   memory_extract: { zh: '提取记忆', en: 'Extract memory' },
+  todo_read: { zh: '读取待办列表', en: 'Read Todo list' },
+  todo_write: { zh: '更新待办列表', en: 'Update Todo list' },
   GoalSet: { zh: '设置目标', en: 'Set goal' },
   GoalClear: { zh: '清除目标', en: 'Clear goal' },
   GoalPause: { zh: '暂停目标', en: 'Pause goal' },
