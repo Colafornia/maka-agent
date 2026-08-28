@@ -937,6 +937,7 @@ function AppShellContent({
   }
 
   function clearSessionRendererState(sessionId: string): void {
+    dropDisplayEvents(sessionId);
     clearOwnedSessionState(sessionId);
     turnActionRegistry.clearForSession(sessionId);
     permissionModeChangeRegistry.keysRef.current.delete(sessionId);
@@ -2191,6 +2192,7 @@ function AppShellContent({
     reconcilePersistedMessages,
     settleAssistantStreaming,
     flushDisplayEvents,
+    dropDisplayEvents,
     markDisplayPending,
     markDisplayReady,
   } = useStableActions(createAppShellSessionEventHandlers, {
