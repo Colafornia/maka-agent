@@ -20,12 +20,38 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDefaultRuntimePolicy } from '@maka/core/runtime-policy';
+import { buildAgentSwarmStatusTool } from '@maka/runtime/agent-swarm-status-tool';
 import { buildComputerUseTools } from '@maka/runtime/computer-use-tools';
-import { createInteractiveRunComposer } from '@maka/runtime-host/test-only/interactive-run-composer';
+import { buildDeepResearchTools } from '@maka/runtime/deep-research-tools';
+import { buildGoalTools } from '@maka/runtime/goal-tools';
+import { buildHistoryTools } from '@maka/runtime/history-tools';
+import { buildMemoryExtractionTriggerTools } from '@maka/runtime/memory-extraction';
+import {
+  buildCancelPlanTool,
+  buildSubmitPlanTool,
+  buildUpdatePlanTool,
+} from '@maka/runtime/plan-tools';
+import { buildScheduledTaskTool } from '@maka/runtime/scheduled-task-tools';
+import { buildParentAgentTools } from '@maka/runtime/subagent-tools';
+import { buildAgentGraphSupervisorTools } from '@maka/runtime/test-only/tool-presentation';
+import { createToolResultArchiveCapability } from '@maka/runtime/tool-result-archive-capability';
+import {
+  buildHostAgentSettingsTools,
+  createInteractiveRunComposer,
+  createHostWebFetchTool,
+  createHostWebSearchTool,
+} from '@maka/runtime-host/test-only/interactive-run-composer';
 import { BUILTIN_TOOL_LABELS } from '@maka/ui';
 import { buildBrowserTools } from '../browser/browser-tools.js';
 import { buildClientSettingsTools } from '../client-settings-tools.js';
 import { buildRiveWorkflowTool } from '../rive-workflow-tool.js';
+
+function assertLocalized(tools: readonly { readonly name: string }[]): void {
+  assert.deepEqual(
+    tools.map(({ name }) => name).filter((name) => !Object.hasOwn(BUILTIN_TOOL_LABELS, name)),
+    [],
+  );
+}
 
 test('every default Runtime Host tool has localized Desktop presentation', () => {
   const composer = createInteractiveRunComposer({
@@ -35,15 +61,33 @@ test('every default Runtime Host tool has localized Desktop presentation', () =>
     } as never,
     memory: {} as never,
     sessionTodo: {} as never,
-    builtinTools: {},
+    builtinTools: {
+      backgroundTasks: {} as never,
+      ptyControls: {} as never,
+    },
   });
 
-  assert.deepEqual(
-    composer.tools
-      .map(({ name }) => name)
-      .filter((name) => !Object.hasOwn(BUILTIN_TOOL_LABELS, name)),
-    [],
-  );
+  assertLocalized(composer.tools);
+});
+
+test('every conditional Runtime Host tool has localized Desktop presentation', () => {
+  assertLocalized([
+    ...buildHostAgentSettingsTools({} as never),
+    createHostWebSearchTool({} as never),
+    createHostWebFetchTool({} as never),
+    ...buildHistoryTools({} as never),
+    buildScheduledTaskTool({} as never),
+    ...buildGoalTools({} as never),
+    ...buildParentAgentTools(),
+    buildSubmitPlanTool({} as never),
+    buildUpdatePlanTool({} as never, 'presentation-contract'),
+    buildCancelPlanTool({} as never, 'presentation-contract'),
+    ...buildDeepResearchTools({} as never),
+    ...buildAgentGraphSupervisorTools({ graphId: 'presentation-contract' } as never),
+    buildAgentSwarmStatusTool({} as never),
+    ...buildMemoryExtractionTriggerTools({} as never),
+    createToolResultArchiveCapability({} as never).archiveReadTool,
+  ]);
 });
 
 test('every Desktop-owned tool has localized presentation', () => {
@@ -54,8 +98,5 @@ test('every Desktop-owned tool has localized presentation', () => {
     buildRiveWorkflowTool(),
   ];
 
-  assert.deepEqual(
-    tools.map(({ name }) => name).filter((name) => !Object.hasOwn(BUILTIN_TOOL_LABELS, name)),
-    [],
-  );
+  assertLocalized(tools);
 });
