@@ -193,6 +193,7 @@
 
 .maka-chat-layout {
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .maka-chat-shell {

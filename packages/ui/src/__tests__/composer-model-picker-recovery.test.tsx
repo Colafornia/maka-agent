@@ -138,7 +138,7 @@ test('model switch availability has one priority-ordered contract', () => {
   );
 });
 
-test('the recovery handle opens the existing exact account-and-model picker', async () => {
+test('the model picker recovers and survives session changes', async () => {
   const original = {
     document: globalThis.document,
     window: globalThis.window,
@@ -266,7 +266,7 @@ test('the recovery handle opens the existing exact account-and-model picker', as
         <Composer
           ref={composer}
           activeSession={{
-            id: 'legacy-session',
+            id: 'new-session',
             llmConnectionSlug: 'legacy-openrouter',
             model: 'legacy-model',
           } as SessionSummary}
@@ -281,6 +281,16 @@ test('the recovery handle opens the existing exact account-and-model picker', as
         />
       </LocaleProvider>,
     ));
+    const triggerAfterSessionSwitch = document.querySelector<HTMLElement>(
+      '.maka-model-switcher-trigger',
+    );
+    assert.ok(triggerAfterSessionSwitch, 'session changes must keep the model trigger mounted');
+    assert.equal(
+      document.querySelector<HTMLElement>('.maka-model-switcher-trigger [aria-expanded]')
+        ?.getAttribute('aria-readonly'),
+      null,
+      'session changes must not create a transient read-only trigger',
+    );
     await act(() => composer.current?.openModelPicker());
 
     const selectedOption = document.querySelector<HTMLElement>(

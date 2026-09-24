@@ -302,6 +302,13 @@
   align-items: center;
 }
 
+/* Keep Astryx's disabled permission trigger from fading during a session
+   switch; it still exposes its disabled state and blocks activation. */
+.maka-composer-left-controls .permissionModeIcon [aria-disabled='true'],
+.maka-composer-left-controls .permissionModeIcon button:disabled {
+  opacity: 1;
+}
+
 /* Cursor: product-wide native-cursor.css (maka.legacy) owns default vs pointer. */
 
 /* Astryx sm list density: DropdownMenuItem + Selector options use

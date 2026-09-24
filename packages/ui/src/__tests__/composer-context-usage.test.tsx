@@ -72,6 +72,44 @@ test('the context usage action opens its host trace surface', async () => {
 
     await act(() => action.dispatchEvent(new window.Event('click', { bubbles: true })));
     assert.equal(opened, true);
+
+    await act(() => root.render(
+      <LocaleProvider locale="en">
+        <Composer
+          contextUsage={{ pending: true, onOpen: () => undefined }}
+          onSend={() => undefined}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    ));
+    const pendingAction = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open usage trace"]',
+    );
+    assert.equal(pendingAction, action);
+    const value = pendingAction?.querySelector('.maka-context-usage-value');
+    assert.equal(value?.getAttribute('aria-busy'), 'true');
+    assert.equal(pendingAction?.textContent?.trim(), '--%');
+
+    await act(() => root.render(
+      <LocaleProvider locale="en">
+        <Composer
+          contextUsage={{
+            pending: true,
+            usageTokens: 40_000,
+            metadataContextWindow: 100_000,
+            onOpen: () => undefined,
+          }}
+          onSend={() => undefined}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    ));
+    const resolvedAction = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open usage trace"]',
+    );
+    assert.equal(resolvedAction, action);
+    assert.equal(value?.getAttribute('aria-busy'), null);
+    assert.equal(resolvedAction?.textContent?.trim(), '40%');
   } finally {
     await act(() => root.unmount());
     Object.assign(globalThis, original);
