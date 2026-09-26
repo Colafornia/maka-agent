@@ -1,0 +1,128 @@
+<!doctype html>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maka Compact：把超长对话变短</title>
+  <style>
+    :root { --ink:#172033; --muted:#64748b; --paper:#f7f9fc; --card:#fff; --line:#dbe4f0; --blue:#2563eb; --teal:#0f766e; --amber:#b45309; --rose:#be123c; --violet:#6d28d9; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:linear-gradient(135deg,#f7fbff 0%,#f8f7ff 100%); font:16px/1.6 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif; }
+    .wrap { max-width:1180px; margin:auto; padding:42px 24px 72px; }
+    .hero { display:grid; grid-template-columns:1.35fr .65fr; gap:24px; align-items:stretch; margin-bottom:28px; }
+    .hero-main,.hero-side,.card { background:rgba(255,255,255,.88); border:1px solid rgba(219,228,240,.9); border-radius:24px; box-shadow:0 14px 36px rgba(34,55,90,.08); }
+    .hero-main { padding:34px; }
+    .eyebrow { color:var(--blue); font-weight:800; letter-spacing:.08em; font-size:13px; text-transform:uppercase; }
+    h1 { margin:8px 0 12px; font-size:clamp(32px,5vw,58px); line-height:1.05; letter-spacing:-.04em; }
+    h2 { margin:0 0 12px; font-size:25px; letter-spacing:-.02em; }
+    h3 { margin:0 0 7px; font-size:18px; }
+    p { margin:8px 0; }
+    .hero-main p { color:#475569; max-width:720px; font-size:18px; }
+    .hero-side { padding:24px; background:#172033; color:#fff; position:relative; overflow:hidden; }
+    .hero-side:after { content:""; width:190px; height:190px; border-radius:50%; background:#314c88; position:absolute; right:-75px; bottom:-75px; opacity:.6; }
+    .hero-side strong { display:block; font-size:40px; line-height:1; margin:15px 0; color:#a5f3fc; }
+    .legend { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+    .pill { display:inline-flex; align-items:center; gap:7px; border-radius:999px; padding:5px 10px; font-size:13px; font-weight:700; background:#eef4ff; color:#274690; }
+    .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+    .dot.now{background:var(--teal)} .dot.add{background:var(--amber)} .dot.risk{background:var(--rose)}
+    .section { margin-top:30px; }
+    .section-lead { color:var(--muted); margin-top:-5px; }
+    .flow { display:grid; grid-template-columns:repeat(5,1fr); gap:13px; align-items:stretch; margin-top:18px; }
+    .step { position:relative; background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px 16px 17px; min-height:190px; }
+    .step:not(:last-child):after { content:"→"; position:absolute; right:-19px; top:72px; z-index:2; color:#8ba0bf; font-size:27px; font-weight:800; }
+    .num { width:31px; height:31px; display:grid; place-items:center; border-radius:10px; color:#fff; font-weight:800; background:var(--blue); margin-bottom:13px; }
+    .step small,.mini { display:block; color:var(--muted); font-size:13px; }
+    .decision { border-color:#f5c978; background:#fffbeb; }
+    .decision .num { background:var(--amber); }
+    .safe { border-color:#9bd7cc; background:#f0fdfa; }
+    .safe .num { background:var(--teal); }
+    .fail { border-color:#f2a7bb; background:#fff1f2; }
+    .fail .num { background:var(--rose); }
+    .branches { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+    .branch { padding:18px; border-radius:18px; border:1px solid var(--line); background:#fff; }
+    .branch h3 { display:flex; align-items:center; gap:9px; }
+    .branch ul { margin:8px 0 0; padding-left:20px; color:#475569; }
+    .opt-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:18px; }
+    .opt { background:#fff; border:1px solid var(--line); border-radius:18px; padding:19px; position:relative; }
+    .opt .tag { display:inline-block; border-radius:8px; padding:3px 8px; font-size:12px; font-weight:800; margin-bottom:9px; }
+    .high .tag { background:#dcfce7; color:#166534; } .mid .tag { background:#fef3c7; color:#92400e; } .later .tag { background:#ede9fe; color:#5b21b6; }
+    .opt p { color:#475569; font-size:14px; }
+    .where { margin-top:11px; padding-top:10px; border-top:1px dashed var(--line); color:#52627a; font-size:13px; }
+    code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.88em; background:#eef2f7; padding:2px 5px; border-radius:5px; }
+    .bottom { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:18px; }
+    .card { padding:23px; }
+    .checklist { list-style:none; margin:10px 0 0; padding:0; }
+    .checklist li { display:flex; gap:10px; margin:9px 0; color:#475569; }
+    .checklist b { color:var(--teal); }
+    .source { color:var(--muted); font-size:13px; }
+    @media(max-width:900px){ .hero{grid-template-columns:1fr}.flow{grid-template-columns:1fr 1fr}.step:not(:last-child):after{content:"↓"; right:auto; top:auto; bottom:-25px; left:calc(50% - 8px)}.step:nth-child(2):after,.step:nth-child(4):after{content:""}.opt-grid{grid-template-columns:1fr 1fr} }
+    @media(max-width:600px){ .wrap{padding:24px 14px 45px}.hero-main{padding:24px}.flow,.branches,.opt-grid,.bottom{grid-template-columns:1fr}.step:not(:last-child):after{content:"↓"; right:auto; top:auto; bottom:-25px; left:calc(50% - 8px)}.step:nth-child(2):after,.step:nth-child(4):after{content:"↓"} }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="hero-main">
+        <div class="eyebrow">Maka context compaction · ELI5</div>
+        <h1>把“太长的聊天记录”<br>变成“短小的接力棒”</h1>
+        <p>Compact 不会删除原始历史。它会挑出一段已经完成的对话，请模型写成 checkpoint 摘要，再用“摘要 + 最近对话”继续工作。</p>
+        <div class="legend"><span class="pill"><i class="dot now"></i>现在已有</span><span class="pill"><i class="dot add"></i>建议补强</span><span class="pill"><i class="dot risk"></i>需要谨慎</span></div>
+      </div>
+      <aside class="hero-side"><div>核心目标</div><strong>少花钱<br>还能接着做</strong><div>原始 RuntimeEvents 仍保留；改变的是模型下一次看到的投影。</div></aside>
+    </section>
+
+    <section class="section">
+      <h2>一条消息是怎样走过 compact 的？</h2>
+      <p class="section-lead">把它想成“整理书包”：先决定该整理多少，再请模型写便签，最后把便签放回书包最前面。</p>
+      <div class="flow">
+        <article class="step"><div class="num">1</div><h3>发现快超窗</h3><small>触发点</small><p>请求变得太长，或用户手动执行 <code>/compact</code>。</p><small>当前：provider overflow + mid-turn capacity</small></article>
+        <article class="step decision"><div class="num">2</div><h3>选安全边界</h3><small>不能切一半</small><p>只折叠完成事件；不拆开 tool call/result，也不吞掉当前 steering 消息。</p><small>当前：safe prefix + checkpoint prefix match</small></article>
+        <article class="step"><div class="num">3</div><h3>准备摘要输入</h3><small>给整理员看</small><p>把事件投影成模型消息；必要时把旧 tool output 换成 placeholder。</p><small>当前：chars/token 估算 + tool-result fit</small></article>
+        <article class="step safe"><div class="num">4</div><h3>模型写 checkpoint</h3><small>生成接力便签</small><p>摘要必须符合固定格式；失败会 repair 或回退到更小范围。</p><small>当前：结构校验 + provider usage tracking</small></article>
+        <article class="step"><div class="num">5</div><h3>持久化并继续</h3><small>换成短投影</small><p>写入 checkpoint，再展示“摘要 + 未折叠尾巴”。原始事件仍在账本里。</p><small>当前：durable checkpoint + replay</small></article>
+      </div>
+      <div class="branches">
+        <div class="branch"><h3><i class="dot now"></i>成功路径</h3><ul><li>checkpoint 写成功</li><li>下一次请求携带短摘要</li><li>继续正常 agent turn</li></ul></div>
+        <div class="branch"><h3><i class="dot risk"></i>失败路径（当前）</h3><ul><li>摘要失败或输入仍超限</li><li>保持原历史，记录 fail-open</li><li>后续请求可能再次 overflow</li></ul></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>建议把优化放在哪里？</h2>
+      <p class="section-lead">优先改“请求怎么发”和“预算怎么算”；最后再改“失败时是否允许有损”。</p>
+      <div class="opt-grid">
+        <article class="opt high"><span class="tag">高置信 · 先做</span><h3>① 复用缓存前缀</h3><p>摘要请求复用普通请求的 system、tools 和历史前缀，只在末尾追加一条 compact 指令。这样 provider 可以复用 KV cache。</p><div class="where">对应节点：3 → 4<br>参考：Reasonix <code>summaryRequest</code></div></article>
+        <article class="opt high"><span class="tag">高置信 · 先做</span><h3>② 摘要预算跟窗口走</h3><p>把固定 8000 改成 <code>min(8192, max(window/4, 512))</code>。小窗口不会被摘要本身挤爆，大窗口仍有上限。</p><div class="where">对应节点：3 → 4<br>不应改变触发时机</div></article>
+        <article class="opt high"><span class="tag">高置信 · 先做</span><h3>③ 留 5% 规划余量</h3><p>估算不是 tokenizer 本人。给 framing、provider 字段和语言差异留 <code>max(256, 5% window)</code> 的安全垫。</p><div class="where">对应节点：2 → 3<br>只影响规划，不替代 provider 判定</div></article>
+        <article class="opt mid"><span class="tag">中高置信 · 第二批</span><h3>④ 摘要失败也能脱险</h3><p>正常摘要 → 缩短输入 → repair → 有损 truncate。canonical 历史不删，只写 durable projection，并明确标记 lossy。</p><div class="where">对应节点：4 的失败分支<br>收益高，数据质量风险也最高</div></article>
+        <article class="opt mid"><span class="tag">中高置信 · 第二批</span><h3>⑤ 记住改过哪些文件</h3><p>checkpoint 增加 <code>readFiles</code>、<code>modifiedFiles</code>，跨 checkpoint 累积。模型不用只靠摘要“自觉记住”。</p><div class="where">对应节点：4 → 5<br>参考：Pi fileOps ledger</div></article>
+        <article class="opt mid"><span class="tag">中高置信 · 第二批</span><h3>⑥ 混合估算 + prune 门槛</h3><p>用 provider usage 锚定已知部分，尾部再用 chars/4；只有预计一次 prune 能回收足够 token 时才动手。</p><div class="where">对应节点：2 → 3<br>先补“预计回收量”指标</div></article>
+      </div>
+    </section>
+
+    <section class="bottom">
+      <div class="card"><h2>推荐落地顺序</h2><ul class="checklist"><li><b>01</b><span>缓存对齐 + cache hit/miss 观测</span></li><li><b>02</b><span>窗口联动 output budget</span></li><li><b>03</b><span>5% planning reserve</span></li><li><b>04</b><span>usage anchor、prune 收益门槛、fileOps</span></li><li><b>05</b><span>最后再上线 lossy fallback 和插件 hook</span></li></ul></div>
+      <div class="card"><h2>看哪些指标判断有效？</h2><ul class="checklist"><li><b>→</b><span>摘要请求的 cache hit tokens 是否上升</span></li><li><b>→</b><span>每次 compact 实际节省多少 input tokens</span></li><li><b>→</b><span>摘要失败、repair、overflow 的比例</span></li><li><b>→</b><span>同一长会话的 compact 次数和总耗时</span></li></ul><p class="source">实现入口：<code>packages/runtime/src/history-compact-summarizer.ts</code>、<code>history-compaction.ts</code>、<code>ai-sdk-compaction.ts</code></p></div>
+    </section>
+  </main>
+</body>
+</html>

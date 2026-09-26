@@ -21,6 +21,7 @@ import type { SideNavImperativeCollapseHandle } from '@astryxdesign/core/SideNav
 import type { SessionViewMode } from '@maka/ui';
 import { safeLocalStorageSet } from '../../../browser-storage.js';
 import { createObservableState } from '../../../application/contracts/session-catalog/observable-state.js';
+import { shellRailLayoutPort } from '../../../application/contracts/shell-layout-contract.js';
 import {
   clampSessionListWidth,
   readSessionListCollapsed,
@@ -33,6 +34,8 @@ import {
 const LAYOUT_PERSIST_DEBOUNCE_MS = 200;
 
 export interface SessionRailLayoutState {
+  /** What the rail shows: the preference, or on a compact window only what
+      the user opened there. Every reader wants this one. */
   readonly collapsed: boolean;
   readonly width: number;
   readonly viewMode: SessionViewMode;
@@ -51,13 +54,32 @@ export interface SessionRailLayoutState {
  * One rail exists per renderer and its persisted form is already a single
  * localStorage record, so the store is a module value: there is no second
  * instance for it to be an instance of.
+ *
+ * A compact window hides the rail without touching the stored preference.
+ * Opening it there is a choice for this narrow spell only; if it is still open
+ * when the window widens it stays open and becomes the preference, so widening
+ * never takes a rail away and narrowing never rewrites what the user stored.
  */
 export function createSessionRailLayoutStore() {
+  let preferredCollapsed = readSessionListCollapsed();
+  let compact = false;
+  let openedWhileCompact = false;
+  const visibleCollapsed = () => (compact ? !openedWhileCompact : preferredCollapsed);
   const state = createObservableState<SessionRailLayoutState>({
-    collapsed: readSessionListCollapsed(),
+    collapsed: visibleCollapsed(),
     width: readSessionListWidth(),
     viewMode: readSessionListViewMode(),
   });
+  const publishCollapsed = () => {
+    const current = state.getState();
+    const collapsed = visibleCollapsed();
+    if (current.collapsed !== collapsed) state.replaceState({ ...current, collapsed });
+  };
+  const setPreferredCollapsed = (next: boolean) => {
+    if (preferredCollapsed === next) return;
+    preferredCollapsed = next;
+    safeLocalStorageSet('maka-chat-list-collapsed-v1', next ? 'true' : 'false');
+  };
   const collapseHandleRef: { current: SideNavImperativeCollapseHandle | null } = { current: null };
   let widthPersistHandle: ReturnType<typeof setTimeout> | undefined;
 
@@ -66,10 +88,17 @@ export function createSessionRailLayoutStore() {
     subscribe: state.subscribe,
     collapseHandleRef,
     setCollapsed(next: boolean): void {
-      const current = state.getState();
-      if (current.collapsed === next) return;
-      state.replaceState({ ...current, collapsed: next });
-      safeLocalStorageSet('maka-chat-list-collapsed-v1', next ? 'true' : 'false');
+      if (compact) openedWhileCompact = !next;
+      else setPreferredCollapsed(next);
+      publishCollapsed();
+    },
+    /** The window's narrow reading, fed in by the feature's reads hook. */
+    setCompact(next: boolean): void {
+      if (compact === next) return;
+      if (!next && openedWhileCompact) setPreferredCollapsed(false);
+      compact = next;
+      openedWhileCompact = false;
+      publishCollapsed();
     },
     /** Debounced: a drag reports a width per frame and only the last one is worth storing. */
     setWidth(next: number): void {
@@ -102,6 +131,10 @@ export function createSessionRailLayoutStore() {
 export type SessionRailLayoutStore = ReturnType<typeof createSessionRailLayoutStore>;
 
 export const sessionRailLayoutStore: SessionRailLayoutStore = createSessionRailLayoutStore();
+
+/* The Workbar controller's compact toggle reads the rail through the shell
+   layout contract's port rather than importing this feature. */
+shellRailLayoutPort.current = sessionRailLayoutStore;
 
 /**
  * The whole geometry. Both readers use more than one field of it, and the store

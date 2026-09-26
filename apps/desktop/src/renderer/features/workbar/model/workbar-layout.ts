@@ -52,7 +52,12 @@ export const SESSION_BOTTOM_PANEL_MAX_HEIGHT = 520;
 export interface WorkbarLayoutState {
   panels: SessionWorkbarPanelsState;
   activeSessionId: string | undefined;
+  /** The stored per-Session preference. Readers want `isSessionWorkbarCollapsed`. */
   collapsedBySession: Record<string, boolean>;
+  /** A compact window hides every Workbar except the ones opened while it was
+      compact, which this lists. Never persisted: it lasts one narrow spell. */
+  compact: boolean;
+  openedWhileCompact: Record<string, true>;
   bottomOpen: boolean;
   rightWidth: number;
   bottomHeight: number;
@@ -68,6 +73,7 @@ export type WorkbarLayoutAction =
       tabIds: readonly string[];
     }
   | { type: 'activate-session'; sessionId: string | undefined }
+  | { type: 'set-compact'; compact: boolean }
   | { type: 'retain-sessions'; sessionIds: ReadonlySet<string> }
   | {
       type: 'collapse';
@@ -116,17 +122,48 @@ function readSessionWorkbarCollapsed(): Record<string, boolean> {
   }
 }
 
+function isCollapsedFor(state: WorkbarLayoutState, id: string | undefined): boolean {
+  if (id === undefined) return true;
+  if (state.compact) return !Object.hasOwn(state.openedWhileCompact, id);
+  return Object.hasOwn(state.collapsedBySession, id) ? state.collapsedBySession[id]! : true;
+}
+
 export function isSessionWorkbarCollapsed(state: WorkbarLayoutState): boolean {
-  const id = state.activeSessionId;
-  return id !== undefined && Object.hasOwn(state.collapsedBySession, id)
-    ? state.collapsedBySession[id]!
-    : true;
+  return isCollapsedFor(state, state.activeSessionId);
+}
+
+/** On a compact window a toggle only changes this narrow spell; otherwise it is the preference. */
+function withCollapsedFor(
+  state: WorkbarLayoutState,
+  id: string | undefined,
+  collapsed: boolean,
+): WorkbarLayoutState {
+  if (id === undefined || isCollapsedFor(state, id) === collapsed) return state;
+  if (state.compact) {
+    const { [id]: _dropped, ...rest } = state.openedWhileCompact;
+    return { ...state, openedWhileCompact: collapsed ? rest : { ...rest, [id]: true } };
+  }
+  return { ...state, collapsedBySession: { ...state.collapsedBySession, [id]: collapsed } };
 }
 
 function withRightCollapsed(state: WorkbarLayoutState, collapsed: boolean): WorkbarLayoutState {
-  const id = state.activeSessionId;
-  if (id === undefined || isSessionWorkbarCollapsed(state) === collapsed) return state;
-  return { ...state, collapsedBySession: { ...state.collapsedBySession, [id]: collapsed } };
+  return withCollapsedFor(state, state.activeSessionId, collapsed);
+}
+
+/**
+ * Entering compact hides every Workbar and leaves the preferences alone.
+ * Leaving it keeps each Workbar the user opened meanwhile open, as the new
+ * preference, so widening never takes a Workbar away.
+ */
+function withCompact(state: WorkbarLayoutState, compact: boolean): WorkbarLayoutState {
+  if (state.compact === compact) return state;
+  const collapsedBySession = compact
+    ? state.collapsedBySession
+    : {
+        ...state.collapsedBySession,
+        ...Object.fromEntries(Object.keys(state.openedWhileCompact).map((id) => [id, false])),
+      };
+  return { ...state, compact, openedWhileCompact: {}, collapsedBySession };
 }
 
 export function readSessionBottomPanelHeight(): number {
@@ -140,11 +177,13 @@ export function readSessionBottomPanelOpen(): boolean {
   return safeLocalStorageGet('maka-session-bottom-panel-open-v1') === 'true';
 }
 
-export function loadWorkbarLayout(activeSessionId?: string): WorkbarLayoutState {
+export function loadWorkbarLayout(activeSessionId?: string, compact = false): WorkbarLayoutState {
   return {
     panels: parseSessionWorkbarPanels(safeLocalStorageGet('maka-session-workbar-panels-v3')),
     activeSessionId,
     collapsedBySession: readSessionWorkbarCollapsed(),
+    compact,
+    openedWhileCompact: {},
     bottomOpen: readSessionBottomPanelOpen(),
     rightWidth: clampSize(
       readSessionWorkbarWidth(),
@@ -229,6 +268,7 @@ export function reduceWorkbarLayout(
       launcherOpen: right.tabs.length === 0 ? false : right.launcherOpen,
     } } };
   }
+  if (action.type === 'set-compact') return withCompact(state, action.compact);
   if (action.type === 'activate-session') {
     return state.activeSessionId === action.sessionId
       ? state
@@ -242,12 +282,19 @@ export function reduceWorkbarLayout(
       ).map((tab) => tab.id);
       if (tabIds.length) panels = reduceWorkbarPanels(panels, { type: 'close', placement, tabIds });
     }
-    const entries = Object.entries(state.collapsedBySession).filter(
-      ([id]) => id === state.activeSessionId || action.sessionIds.has(id),
-    );
-    return panels === state.panels && entries.length === Object.keys(state.collapsedBySession).length
+    const retained = ([id]: [string, unknown]) => id === state.activeSessionId || action.sessionIds.has(id);
+    const entries = Object.entries(state.collapsedBySession).filter(retained);
+    const opened = Object.entries(state.openedWhileCompact).filter(retained);
+    return panels === state.panels
+      && entries.length === Object.keys(state.collapsedBySession).length
+      && opened.length === Object.keys(state.openedWhileCompact).length
       ? state
-      : { ...state, panels, collapsedBySession: Object.fromEntries(entries) };
+      : {
+          ...state,
+          panels,
+          collapsedBySession: Object.fromEntries(entries),
+          openedWhileCompact: Object.fromEntries(opened) as Record<string, true>,
+        };
   }
   if (action.type === 'collapse') {
     if (action.placement === 'right') {
@@ -290,11 +337,10 @@ export function reduceWorkbarLayout(
   // Session and must not reveal a panel in whichever Session is now selected.
   if (action.type === 'open' && action.tab.ownerSessionId &&
     action.tab.ownerSessionId !== state.activeSessionId) {
-    return { ...state, panels,
-      ...(action.placement === 'right' ? {
-        collapsedBySession: { ...state.collapsedBySession, [action.tab.ownerSessionId]: false },
-      } : {}),
-    };
+    const next = { ...state, panels };
+    return action.placement === 'right'
+      ? withCollapsedFor(next, action.tab.ownerSessionId, false)
+      : next;
   }
   let rightCollapsed = isSessionWorkbarCollapsed(state);
   let bottomOpen = state.bottomOpen;

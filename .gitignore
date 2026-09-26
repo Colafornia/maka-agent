@@ -16,6 +16,9 @@ __pycache__/
 *.pyc
 .agents-workspace-data
 .agents
+# Agent-tool skill directories are machine-local symlink farms (seiton), never
+# committable. `.claude/launch.json` above this directory is tracked on purpose.
+.claude/skills/
 skills-lock.json
 # PR-IR-01 captured screenshots — generated artifacts, not committed.
 apps/desktop/tests/screenshots/

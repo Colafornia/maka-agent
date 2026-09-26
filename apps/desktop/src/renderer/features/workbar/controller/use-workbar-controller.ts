@@ -28,6 +28,7 @@ import {
   type ComponentProps,
 } from 'react';
 import type { ClientCapabilityResponse } from '@maka/core/client-capability-grant';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
 import type { QuoteRef } from '@maka/core/events';
 import type { InteractionFormResponse } from '@maka/core/interaction';
 import type { SessionSummary } from '@maka/core/session';
@@ -52,6 +53,10 @@ import {
   type SessionWorkbarTabKind,
 } from '../model/workbar-tabs.js';
 import { workbarToolDefinition, workbarToolsForWorkspace } from '../model/workbar-tool-definitions.js';
+import {
+  SHELL_WORKBAR_COMPACT_QUERY,
+  shellRailLayoutPort,
+} from '../../../application/contracts/shell-layout-contract.js';
 import {
   consumeCompanionInitialPrompt,
   consumeCompanionQuoteSnapshot,
@@ -81,6 +86,8 @@ export interface WorkbarControllerCommands {
   respondToClientCapability(response: ClientCapabilityResponse): Promise<void>;
   respondToUserForm(sessionId: string, response: InteractionFormResponse): Promise<void>;
   toggleRight(): void;
+  /** The panel-facing toggle: at the compact breakpoint it hides the rail first. */
+  toggleRightPanel(): void;
   toggleTool(kind: SessionWorkbarTabKind): void;
   setWorkbarCollapsed(collapsed: boolean): void;
   /**
@@ -187,7 +194,8 @@ export function useWorkbarController(
     Boolean(input.openNewTaskSurface && input.resolveWorkBoardTarget && input.prepareWorkBoardDraft);
   const terminalCopy = getDesktopConversationCopy(locale).terminalPanel;
   const { browser, sideChat, terminal, workBoard } = useWorkbarServices();
-  const layout = useWorkbarLayoutState(input.layoutSessionId, input.authoritativeSessionIds);
+  const compact = useMediaQuery(SHELL_WORKBAR_COMPACT_QUERY);
+  const layout = useWorkbarLayoutState(input.layoutSessionId, input.authoritativeSessionIds, compact);
   const sideConversations = useSideConversationWorkspace();
   const [pendingSideChatClose, setPendingSideChatClose] = useState<
     Array<{ placement: SessionWorkbarPlacement; tab: SessionWorkbarTab }>
@@ -773,6 +781,21 @@ export function useWorkbarController(
     layout.workbarCollapsed,
   ]);
 
+  /* The panel-facing toggle. At the compact breakpoint the conversation keeps
+     its minimum width, so an expanded rail leaves no grid room for the right
+     Workbar: hiding the rail first is what makes the click do anything. The
+     Workbar may still be logically open while the expanded rail leaves it no
+     room to paint; the click is a reveal action in that state, so toggling the
+     old value would immediately close it again. */
+  const toggleRightPanel = useCallback(() => {
+    const rail = shellRailLayoutPort.current;
+    if (compact && rail && !rail.getState().collapsed) {
+      rail.setCollapsed(true);
+      if (!layout.workbarCollapsed) return;
+    }
+    toggleRight();
+  }, [compact, toggleRight, layout.workbarCollapsed]);
+
   useLayoutEffect(() => {
     setPendingSideChatClose([]);
   }, [activeSessionId]);
@@ -909,6 +932,7 @@ export function useWorkbarController(
       respondToClientCapability,
       respondToUserForm: sideChat.respondToUserForm,
       toggleRight,
+      toggleRightPanel,
       setWorkbarCollapsed: layout.setWorkbarCollapsed,
       bindNewTaskSessionResolver,
     }),
@@ -920,6 +944,7 @@ export function useWorkbarController(
       respondToClientCapability,
       sideChat.respondToUserForm,
       toggleRight,
+      toggleRightPanel,
       layout.setWorkbarCollapsed,
     ],
   );
@@ -949,7 +974,7 @@ export function useWorkbarController(
         revealPlacement(placement);
       },
       onRequestOpenTab: (placement, kind) => openTool(kind, placement),
-      onToggleRightPanel: toggleRight,
+      onToggleRightPanel: toggleRightPanel,
       onDismissPanel: (placement) => {
         if (placement === 'right') layout.setWorkbarCollapsed(true);
         else layout.setBottomPanelOpen(false);

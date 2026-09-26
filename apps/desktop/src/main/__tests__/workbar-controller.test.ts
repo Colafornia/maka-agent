@@ -26,7 +26,11 @@ import type { ShellRunUpdate } from '@maka/core/events';
 import type { SessionSummary } from '@maka/core/session';
 import type { WorkBoardActiveItem, WorkBoardItem, WorkBoardLinkedSession } from '@maka/core/work-board';
 import { LocaleProvider, type ToastApi } from '@maka/ui';
-import { cleanupFakeDom, installReactRenderer } from './fake-dom.js';
+import { cleanupFakeDom, fakeMediaQueryMatches, installReactRenderer } from './fake-dom.js';
+import {
+  SHELL_WORKBAR_COMPACT_QUERY,
+  shellRailLayoutPort,
+} from '../../renderer/application/contracts/shell-layout-contract.js';
 import { TerminalCloseIntents } from '../terminal-close-intents.js';
 import { desktopSessionKey, type TerminalCloseChange } from '../../shared/runtime-host-identity.js';
 import {
@@ -313,8 +317,11 @@ function renderWorkBoardComposition(
   );
 }
 
+const installedRailLayoutPort = shellRailLayoutPort.current;
+
 describe('useWorkbarController', () => {
   afterEach(() => {
+    shellRailLayoutPort.current = installedRailLayoutPort;
     latestController = undefined;
     latestTaskEntryController = undefined;
     controllerRenderSnapshots = [];
@@ -397,6 +404,52 @@ describe('useWorkbarController', () => {
     await act(async () => show('b'));
     assert.equal(controller().host.rightCollapsed, true);
     await act(async () => show('a'));
+    assert.equal(controller().host.rightCollapsed, false);
+  });
+
+  function fakeRail() {
+    return {
+      collapsed: false,
+      calls: 0,
+      getState() {
+        return { collapsed: this.collapsed };
+      },
+      setCollapsed(next: boolean) {
+        this.calls += 1;
+        this.collapsed = next;
+      },
+    };
+  }
+
+  it('hides an expanded rail before revealing the Workbar at the compact breakpoint', async () => {
+    fakeMediaQueryMatches.set(SHELL_WORKBAR_COMPACT_QUERY, true);
+    const rail = fakeRail();
+    shellRailLayoutPort.current = rail;
+    const { root } = installReactRenderer();
+    await act(async () =>
+      renderController(root, createFakeWorkbarServices(), input(session('a'))));
+    // The rail gives up the grid column first, then the same click's reveal
+    // of the collapsed Workbar proceeds.
+    await act(async () => controller().commands.toggleRightPanel());
+    assert.equal(rail.calls, 1);
+    assert.equal(controller().host.rightCollapsed, false);
+
+    // An expanded rail while the Workbar is already logically open: the click
+    // is the reveal action, so the rail goes and the Workbar keeps its state.
+    rail.collapsed = false;
+    await act(async () => controller().commands.toggleRightPanel());
+    assert.equal(rail.calls, 2);
+    assert.equal(controller().host.rightCollapsed, false);
+  });
+
+  it('leaves the rail alone when the window is not compact', async () => {
+    const rail = fakeRail();
+    shellRailLayoutPort.current = rail;
+    const { root } = installReactRenderer();
+    await act(async () =>
+      renderController(root, createFakeWorkbarServices(), input(session('a'))));
+    await act(async () => controller().commands.toggleRightPanel());
+    assert.equal(rail.calls, 0);
     assert.equal(controller().host.rightCollapsed, false);
   });
 

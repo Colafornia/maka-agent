@@ -60,17 +60,16 @@ import {
 // two levels up in the shell — as is the titlebar band the collapse toggle
 // moves into. Those belong to app-shell.stories.tsx, which mounts the shell.
 //
-// Read these at a canvas of 990px or wider. The app's own breakpoint is on the
-// viewport, and Storybook's canvas IS the viewport, so a narrower window puts
-// the panel in its stacked full-width variant rather than in a column. That is
-// the real rule firing, not the story misbehaving; the render smoke mounts at
-// 1280, above it.
+// The column is a column at every window width; there is no stacked variant.
+// What narrows it in the app is the frame's cap beside the conversation, and
+// that lives on the AppShell frame, so the width stories here show the
+// column's own floor and the cap stories live in app-shell.stories.tsx.
 
 const SESSION_ID = 'session-workbar';
-const STACKED_WINDOW_VIEWPORT = {
-  makaStackedWindow: {
-    name: 'Maka window below the 990px stack point',
-    styles: { width: '900px', height: '900px' },
+const NARROW_WINDOW_VIEWPORT = {
+  makaNarrowWindow: {
+    name: 'Maka window below the Workbar compact width',
+    styles: { width: '720px', height: '900px' },
     type: 'desktop' as const,
   },
 };
@@ -1060,7 +1059,7 @@ function bridge(options: {
 
 /**
  * The AppShell grid the workbar really lives in, with an empty conversation
- * column. Its 990px media query is what stacks the column in narrow windows.
+ * column.
  */
 function Workbar(props: {
   workspace?: 'session' | 'workhub';
@@ -1127,8 +1126,7 @@ function Workbar(props: {
         className="maka-detail-with-artifacts"
         data-preview-focused={focused ? props.tab : undefined}
         style={{
-          // Fill the preview viewport like AppShell fills the window; a fixed
-          // height pushes the stacked workbar below the fold in short windows.
+          // Fill the preview viewport like AppShell fills the window.
           height: '100dvh',
           // AppShell declares this on the frame that holds the plates, and the
           // workbar's own grid reserves its first row with it. Without it the
@@ -1190,7 +1188,9 @@ const storyResizable = {
 } as WorkbarHostModel['rightResizable'];
 
 function FocusedHostFlow(props: { tab: 'files' | 'browser'; realComposer?: boolean; streaming?: boolean; stagedFile?: boolean; frameWidth?: number; missingComposerHost?: boolean; onStop?: () => void; onOpenConversation?: (sessionId: string, turnId?: string) => void }) {
-  const layout = useWorkbarLayoutState(SESSION_ID, undefined);
+  // The focused-preview stories emulate a narrow shell by frame width, not the
+  // compact spell; the workbar stays visible per its preference here.
+  const layout = useWorkbarLayoutState(SESSION_ID, undefined, false);
   const [panels, setPanels] = useState(() => createSessionWorkbarPanelsState(
     openStaticSessionWorkbarTab(createSessionWorkbarTabsState(), props.tab),
   ));
@@ -1314,13 +1314,13 @@ export const SeveralFacesAtColumnFloor: Story = {
   },
 };
 
-// Below 991px the column stacks under the conversation at full width. The
-// wide-window ease (app-shell.stories.tsx holds that contract) must not reach
-// it: the face spans the row, and collapsing removes the row instead of
-// leaving an empty band. The smoke lane sizes stories named `narrow` to 720px.
-export const CollapseNarrowStack: Story = {
-  parameters: { viewport: { options: STACKED_WINDOW_VIEWPORT } },
-  globals: { viewport: { value: 'makaStackedWindow', isRotated: false } },
+// A narrow window eases the column shut the same way a wide one does, so the
+// sidebar and the Workbar keep one rhythm: the box closes to zero width and
+// hides once the ease is done, rather than dropping out of layout at once.
+// The smoke lane sizes stories named `narrow` to 720px.
+export const CollapseNarrowWindow: Story = {
+  parameters: { viewport: { options: NARROW_WINDOW_VIEWPORT } },
+  globals: { viewport: { value: 'makaNarrowWindow', isRotated: false } },
   decorators: [bridge()],
   render: () => <Workbar tab="review" collapsible />,
   play: async ({ canvasElement }) => {
@@ -1331,17 +1331,14 @@ export const CollapseNarrowStack: Story = {
     const panel = canvasElement.querySelector<HTMLElement>(
       '.maka-session-workbar-panel[data-overlay][data-placement="right"]',
     )!;
-    const toolbar = frame.querySelector<HTMLElement>('.maka-session-workbar-toolbar')!;
     await canvas.findByRole('region', { name: 'Git 变更' });
-    expect(window.innerWidth).toBeLessThanOrEqual(990);
-    expect(toolbar.getBoundingClientRect().width).toBe(frame.getBoundingClientRect().width);
-    expect(panel.firstElementChild!.getBoundingClientRect().width).toBe(
-      panel.getBoundingClientRect().width,
-    );
+    expect(getComputedStyle(frame).transitionProperty).toContain('width');
 
     await userEvent.click(canvas.getByRole('button', { name: '收起任务工作栏' }));
-    await waitFor(() => expect(getComputedStyle(frame).display).toBe('none'));
-    expect(getComputedStyle(panel).display).toBe('none');
+    await waitFor(() => expect(frame.getBoundingClientRect().width).toBe(0));
+    await waitFor(() => expect(getComputedStyle(frame).visibility).toBe('hidden'));
+    expect(getComputedStyle(frame).display).not.toBe('none');
+    expect(getComputedStyle(panel).visibility).toBe('hidden');
   },
 };
 
@@ -1675,15 +1672,6 @@ export const BrowserAddressFieldTracksColumnWidth: Story = {
   },
 };
 
-// Below 990px the grid stacks the same right-placement column under the
-// conversation: full width, capped at 42dvh. Storybook-UI only: the smoke lane
-// loads iframes at 1280px, above the stack point, so it renders wide there.
-export const BrowserStacked: Story = {
-  parameters: { viewport: { options: STACKED_WINDOW_VIEWPORT } },
-  globals: { viewport: { value: 'makaStackedWindow', isRotated: false } },
-  decorators: [bridge({ browserState: LOADED_BROWSER_STATE })],
-  render: () => <Workbar tab="browser" />,
-};
 // Real path: 任务工作栏 → 浏览器 mid-history — the one nav-control combination
 // the other browser stories never show: forward enabled, not just back.
 export const BrowserCanGoForward: Story = {

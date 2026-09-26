@@ -37,8 +37,12 @@ type ActGlobal = typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
 const cleanupTasks: Array<() => void> = [];
 
+/** Media queries the fake window reports as matching; set before mounting. */
+export const fakeMediaQueryMatches = new Map<string, boolean>();
+
 /** Runs every teardown registered by `installFakeDom` / `installReactRenderer`. */
 export function cleanupFakeDom(): void {
+  fakeMediaQueryMatches.clear();
   while (cleanupTasks.length > 0) cleanupTasks.pop()?.();
 }
 
@@ -66,7 +70,9 @@ export function installFakeDom(): void {
     addEventListener: () => {},
     removeEventListener: () => {},
     matchMedia: (media: string) => ({
-      matches: false,
+      get matches() {
+        return fakeMediaQueryMatches.get(media) ?? false;
+      },
       media,
       onchange: null,
       addListener() {},

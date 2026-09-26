@@ -410,9 +410,10 @@ export function createMainWindowController(deps: MainWindowControllerDeps): Main
       resizable: true,
       // #824: enforce the sanitizeBounds restore floor at runtime resize too,
       // so the both-present dvh layout fix can't be defeated by dragging the
-      // window shorter than the 320px restore minimum. Shares SAFE_MIN_HEIGHT
-      // with sanitizeBounds so the resize floor and the restore floor can't
-      // drift apart (locked by app-region-hygiene-contract.test.ts).
+      // window below the restore minimum. Shares SAFE_MIN_WIDTH and
+      // SAFE_MIN_HEIGHT with sanitizeBounds so the resize floor and the restore
+      // floor can't drift apart (locked by app-region-hygiene-contract.test.ts).
+      minWidth: SAFE_MIN_WIDTH,
       minHeight: SAFE_MIN_HEIGHT,
       backgroundColor: initialBg,
       // The window stays hidden until `ready-to-show`, so the first visible
