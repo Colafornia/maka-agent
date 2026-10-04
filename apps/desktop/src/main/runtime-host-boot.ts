@@ -265,6 +265,7 @@ import {
   type SettingsBotsIpcHandle,
 } from "./settings-bots-ipc-main.js";
 import {
+  hasIsolatedE2eProfile,
   isComputerUseRealModelE2e,
   isE2e,
   isIsolatedE2e,
@@ -446,17 +447,21 @@ const attachmentApprovals = createAttachmentApprovalRegistry();
 /**
  * Dedicated task directories live in the user-owned `~/Maka/tasks` root —
  * deliberately separate from `userData` (settings, credentials, session
- * state) and from the install location. The e2e fixture redirects the root
- * under its isolated workspace so tests never touch real user directories;
- * inside that sandbox the Client-data reserved roots no longer apply.
+ * state) and from the install location. Isolated e2e profiles redirect both
+ * `userData` and the fake home into one sandbox, so the root moves under
+ * the isolated workspace instead — `~` there resolves inside `userData`
+ * itself and would trip the reserved-location guard; inside the sandbox the
+ * Client-data reserved roots no longer apply.
  */
 const managedTaskDirectories = createManagedTaskDirectoryAuthority({
-  root: e2eFixture
-    ? join(workspaceRoot, 'task-directories')
-    : join(app.getPath('home'), app.getName(), 'tasks'),
-  reservedRoots: e2eFixture
-    ? () => [app.getAppPath()]
-    : () => [userDataDir, workspaceRoot, app.getAppPath()],
+  root:
+    e2eFixture || hasIsolatedE2eProfile
+      ? join(workspaceRoot, 'task-directories')
+      : join(app.getPath('home'), app.getName(), 'tasks'),
+  reservedRoots:
+    e2eFixture || hasIsolatedE2eProfile
+      ? () => [app.getAppPath()]
+      : () => [userDataDir, workspaceRoot, app.getAppPath()],
 });
 const sessionLocalStore = new DesktopSessionLocalStore(join(userDataDir, 'session-experience.sqlite'));
 const localSessionChanged = createSessionLocalChangedEmitter({
