@@ -87,9 +87,7 @@ export function useAppShellProjectContext(options: {
     sharedSessionActive: boolean;
     activeSession: DesktopSessionSummary | undefined;
     sharedSessionDialog: SessionCollaborationDialogProjection;
-    moveToDedicatedDirectory(
-      sessionId: string,
-    ): Promise<{ readonly directory?: string } | undefined>;
+    moveToDedicatedDirectory(sessionId: string): Promise<string | undefined>;
     openProjectFolder(): void;
     copy: ShellAppCopy;
     toastApi: ToastApi;
@@ -281,11 +279,11 @@ export function useAppShellProjectContext(options: {
   const moveSessionToDedicatedDirectory = useCallback(async () => {
     if (!sessionId) return;
     // Task Entry reports refusals and failures itself; only success lands here.
-    const result = await moveToDedicatedDirectory(sessionId);
-    if (!result) return;
+    const directory = await moveToDedicatedDirectory(sessionId);
+    if (directory === undefined) return;
     toastApi.toast({
       title: copy.taskDirectoryMovedTitle,
-      ...(result.directory ? { description: copy.taskDirectoryMovedDescription(result.directory) } : {}),
+      description: copy.taskDirectoryMovedDescription(directory),
     });
   }, [sessionId, moveToDedicatedDirectory, copy, toastApi]);
   const taskDirectory = projectInfo?.taskDirectory;

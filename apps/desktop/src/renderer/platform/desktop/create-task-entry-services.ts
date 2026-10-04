@@ -53,7 +53,7 @@ export function createDesktopTaskEntryServices(
       async relocateToDedicatedDirectory(sessionId) {
         const result = await bridge.sessions.moveToDedicatedDirectory(sessionId);
         return result.ok
-          ? { ok: true as const, ...(result.directory ? { directory: result.directory } : {}) }
+          ? { ok: true as const, directory: result.session.cwd }
           : { ok: false as const, reason: result.code };
       },
     },

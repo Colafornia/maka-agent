@@ -63,6 +63,7 @@ import {
   type WorkspaceTarget,
 } from "@maka/runtime-host/protocol";
 import type { AttachmentApprovalRegistry } from "./attachment-approval.js";
+import type { ManagedTaskDirectoryAuthority } from "./managed-task-directory.js";
 import {
   createBotIncomingMainService,
   type BotIncomingMainService,
@@ -160,11 +161,7 @@ export interface DesktopRuntimeHostCandidateDeps {
    * for targets that resolve workspaces there; remote Hosts see `undefined`
    * and refuse dedicated-directory relocation.
    */
-  readonly taskDirectories?: {
-    allocate(): Promise<string>;
-    classify(path: string): Promise<'managed' | 'suspicious' | 'other'>;
-    release(path: string): Promise<void>;
-  };
+  readonly taskDirectories?: ManagedTaskDirectoryAuthority;
   readonly emitSessionsChanged: (
     scope: DesktopTargetScope,
     reason: SessionChangedReason,

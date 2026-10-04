@@ -24,14 +24,6 @@ import { resolveProjectRoot } from '@maka/runtime/system-prompt/project-context'
 export interface CurrentProjectSelection {
   projectId: string | null | undefined;
   path: string;
-  /**
-   * Where `path` came from for a selection with no Project. `'configured'`
-   * marks a user-configured default working directory — a real choice that
-   * keeps its precedence for new tasks. `'implicit'` (also the meaning of an
-   * absent value) marks a resolved fallback or a retained last-known path,
-   * which a projectless task must not silently inherit.
-   */
-  pathSource?: 'configured' | 'implicit';
 }
 
 export interface ProjectRootController {

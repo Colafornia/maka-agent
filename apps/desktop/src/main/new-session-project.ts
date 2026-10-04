@@ -28,29 +28,24 @@ export interface DesktopSessionWorkspaceInput {
 interface DesktopSessionWorkspaceSelection {
   current(): Promise<{
     projectId: string | null | undefined;
-    path: string;
-    pathSource?: 'configured' | 'implicit';
   }>;
-  select(projectId: unknown): Promise<{ project: { id: string } | null; path: string }>;
+  select(projectId: unknown): Promise<{ project: { id: string } | null }>;
   defaultProjectId?(): Promise<string | undefined>;
 }
 
 export interface DesktopSessionWorkspaceOptions {
   readonly allowHostPath?: boolean;
   /**
-   * Allocates a dedicated directory for a projectless task whose selection
-   * path is only an implicit fallback. Called at most once per resolution,
-   * only for new-task creation. When absent the established fallback path is
-   * kept, preserving behavior for surfaces without an allocation authority.
+   * Allocates a dedicated directory for a new projectless task.
    */
-  readonly allocateDedicatedDirectory?: () => Promise<string>;
+  readonly allocateDedicatedDirectory: () => Promise<string>;
 }
 
 export async function resolveDesktopSessionWorkspace(
   input: DesktopSessionWorkspaceInput,
   selection: DesktopSessionWorkspaceSelection,
   catalog: Pick<ProjectCatalog, 'register'>,
-  options: DesktopSessionWorkspaceOptions = {},
+  options: DesktopSessionWorkspaceOptions,
 ): Promise<WorkspaceTarget> {
   if (input.cwd) {
     if (input.projectId === null) {
@@ -67,8 +62,7 @@ export async function resolveDesktopSessionWorkspace(
   if (input.projectId !== undefined) {
     if (input.projectId === null) {
       if (options.allowHostPath === false) throw remoteProjectRequired();
-      const current = await selection.current();
-      return { kind: 'host_path', path: await implicitTaskDirectory(current, options) };
+      return { kind: 'host_path', path: await options.allocateDedicatedDirectory() };
     }
     // Session creation names a Project; it must not also mutate the Host's
     // persisted current-Project preference. The Runtime Host validates the
@@ -87,21 +81,7 @@ export async function resolveDesktopSessionWorkspace(
     return { kind: 'project', projectId: current.projectId };
   }
   if (options.allowHostPath === false) throw remoteProjectRequired();
-  return { kind: 'host_path', path: await implicitTaskDirectory(current, options) };
-}
-
-/**
- * A configured default directory is a real choice and keeps its precedence.
- * Anything else a projectless selection carries — a resolved fallback root or
- * a retained last-known path — is an implicit inheritance the task must not
- * keep; a dedicated directory takes its place when an allocator is wired.
- */
-async function implicitTaskDirectory(
-  current: { readonly path: string; readonly pathSource?: 'configured' | 'implicit' },
-  options: DesktopSessionWorkspaceOptions,
-): Promise<string> {
-  if (current.pathSource === 'configured') return current.path;
-  return (await options.allocateDedicatedDirectory?.()) ?? current.path;
+  return { kind: 'host_path', path: await options.allocateDedicatedDirectory() };
 }
 
 function remoteProjectRequired(): Error {

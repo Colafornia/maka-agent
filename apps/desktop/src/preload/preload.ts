@@ -55,7 +55,6 @@ import type {
   PermissionOverlayStartResult,
   RendererIngestInput,
   DesktopBranchFromTurnInput,
-  DesktopSessionDedicatedDirectoryResult,
   DesktopSideConversationBranchResult,
   DesktopSessionStopResult,
   DesktopReviseBeforeTurnInput,
@@ -2637,16 +2636,8 @@ const makaBridge = {
     moveToProject(sessionId: string, projectId: string | null): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>> {
       return invokeSessionUpdate('sessions:moveToProject', sessionId, projectId);
     },
-    async moveToDedicatedDirectory(sessionId: string): Promise<DesktopSessionDedicatedDirectoryResult> {
-      const session = await runtimeHostSessionRef(sessionId);
-      const result = (await invokeWhenReady(
-        'sessions:moveToDedicatedDirectory',
-        session.scope,
-        session.sessionId,
-      )) as DesktopSessionUpdateResult<DesktopSessionSummaryInput> & { directory?: string };
-      return result.ok
-        ? { ok: true, session: projectSessionSummary(session.scope, result.session), directory: result.directory }
-        : result;
+    moveToDedicatedDirectory(sessionId: string): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>> {
+      return invokeSessionUpdate('sessions:moveToDedicatedDirectory', sessionId);
     },
     setPermissionMode(sessionId: string, mode: PermissionMode): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>> {
       return invokeSessionUpdate('sessions:setPermissionMode', sessionId, mode);

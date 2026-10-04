@@ -108,12 +108,11 @@ export interface TaskEntryControllerCommands {
   /**
    * The explicit per-task correction for an unsafe inherited directory:
    * rebinds the Session to a fresh dedicated task directory. Resolves to the
-   * outcome — `undefined` means refused (already reported), an object carries
-   * the directory it landed on when the Host named it.
+   * directory it landed on — `undefined` means refused (already reported).
    */
   moveSessionToDedicatedDirectory(
     sessionId: string,
-  ): Promise<{ readonly directory?: string } | undefined>;
+  ): Promise<string | undefined>;
   addSessionWorkspace(input: {
     sessionId: string;
     profileId: string;
@@ -380,7 +379,7 @@ export function useTaskEntryController(
 
   const moveSessionToDedicatedDirectory = useCallback(async (
     sessionId: string,
-  ): Promise<{ readonly directory?: string } | undefined> => {
+  ): Promise<string | undefined> => {
     try {
       const result = await sessionService.relocateToDedicatedDirectory(sessionId);
       if (!result.ok) {
@@ -392,7 +391,7 @@ export function useTaskEntryController(
         return undefined;
       }
       closeSessionWorkspaceRecovery();
-      return result.directory === undefined ? {} : { directory: result.directory };
+      return result.directory;
     } catch (cause) {
       reportError({
         title: copy.projectUpdateFailedTitle,

@@ -1242,7 +1242,7 @@ const SHELL_COPY_BY_LOCALE = {
       tryAgainLater: '请稍后重试。',
       loading: '加载中',
       goToModels: '去模型',
-      taskDirectorySuspiciousTitle: '此任务的工作目录是旧版兜底路径',
+      taskDirectorySuspiciousTitle: '此任务的工作目录可能混入无关文件',
       taskDirectorySuspiciousDescription:
         '任务输出可能混入了无关文件。可将工作目录迁移到此任务的专属目录；旧目录中的文件不会被移动。',
       taskDirectoryMoveLabel: '迁移到专属任务目录',
@@ -1772,7 +1772,7 @@ const SHELL_COPY_BY_LOCALE = {
       tryAgainLater: '請稍後重試。',
       loading: '載入中',
       goToModels: '去模型',
-      taskDirectorySuspiciousTitle: '此任務的工作目錄是舊版預設兜底路徑',
+      taskDirectorySuspiciousTitle: '此任務的工作目錄可能混入無關檔案',
       taskDirectorySuspiciousDescription:
         '任務輸出可能混入了無關檔案。可將工作目錄遷移至此任務的專屬目錄；舊目錄中的檔案不會被移動。',
       taskDirectoryMoveLabel: '遷移到專屬任務目錄',
@@ -2348,7 +2348,7 @@ const SHELL_COPY_BY_LOCALE = {
       tryAgainLater: 'Try again later.',
       loading: 'Loading',
       goToModels: 'Go to Models',
-      taskDirectorySuspiciousTitle: 'This task is bound to a legacy fallback directory',
+      taskDirectorySuspiciousTitle: 'This task’s working directory may contain unrelated files',
       taskDirectorySuspiciousDescription:
         'Task output may be mixed with unrelated files. You can move it to a dedicated task directory; existing files stay where they are.',
       taskDirectoryMoveLabel: 'Move to dedicated task directory',

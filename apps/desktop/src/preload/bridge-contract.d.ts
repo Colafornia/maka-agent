@@ -363,13 +363,6 @@ export type DesktopSessionStopResult =
  */
 export type TaskDirectoryBinding = 'managed' | 'suspicious' | 'other';
 
-/**
- * `moveToDedicatedDirectory` reports the directory the Session was bound to
- * alongside the standard update result.
- */
-export type DesktopSessionDedicatedDirectoryResult =
-  DesktopSessionUpdateResult<DesktopSessionSummary> & { readonly directory?: string };
-
 /** Cancellation proof aggregated across every Runtime Host query batch. */
 export interface DesktopMessageCancellationQueryResult {
   readonly cancelledMessageIds: readonly string[];
@@ -1380,9 +1373,10 @@ export interface MakaBridge {
      * Explicit per-task correction: rebinds this Session's workspace to a
      * fresh dedicated task directory. Preserves every relocation safeguard of
      * `moveToProject` (busy/archived/CAS); refuses on Hosts that cannot
-     * provision Client directories.
+     * provision Client directories. The landed directory is the returned
+     * Session's `cwd`.
      */
-    moveToDedicatedDirectory(sessionId: string): Promise<DesktopSessionDedicatedDirectoryResult>;
+    moveToDedicatedDirectory(sessionId: string): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>>;
     setPermissionMode(sessionId: string, mode: PermissionMode): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>>;
     /**
      * Enter or leave Plan — a temporary collaboration excursion Runtime ends

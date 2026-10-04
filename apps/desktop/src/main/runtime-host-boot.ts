@@ -460,8 +460,8 @@ const managedTaskDirectories = createManagedTaskDirectoryAuthority({
       : join(app.getPath('home'), app.getName(), 'tasks'),
   reservedRoots:
     e2eFixture || hasIsolatedE2eProfile
-      ? () => [app.getAppPath()]
-      : () => [userDataDir, workspaceRoot, app.getAppPath()],
+      ? [app.getAppPath()]
+      : [userDataDir, workspaceRoot, app.getAppPath()],
 });
 const sessionLocalStore = new DesktopSessionLocalStore(join(userDataDir, 'session-experience.sqlite'));
 const localSessionChanged = createSessionLocalChangedEmitter({
@@ -751,18 +751,16 @@ const selectedDesktopWorkspaceTarget = async (
 const currentDesktopWorkspaceTarget = async (
   target: DesktopRuntimeHostTargetPolicy,
 ): Promise<WorkspaceTarget> => {
-  const currentTarget = requireRuntimePolicyTarget(target);
-  const current = await currentTarget.projectManagement.current();
-  if (typeof current.projectId === "string") {
-    return { kind: "project", projectId: current.projectId };
-  }
-  if (runtimeHostProfileUsesHostWorkspace(target.kind)) {
+  const workspace = await selectedDesktopWorkspaceTarget(target);
+  if (!workspace) {
     throw new Error("Select a project from the Runtime Host first");
   }
-  if (current.pathSource === "configured") {
-    return { kind: "host_path", path: current.path };
+  // A projectless binding inherits only an implicit path; a new top-level
+  // task gets a dedicated directory instead.
+  if (workspace.kind === 'host_path') {
+    return { kind: 'host_path', path: await managedTaskDirectories.allocate() };
   }
-  return { kind: "host_path", path: await managedTaskDirectories.allocate() };
+  return workspace;
 };
 const requireWorkHubTarget = (scope: DesktopTargetScope): DesktopRuntimeHostTargetContext => {
   const target = runtimePolicyTargetsByEpoch.get(scope.targetEpoch);

@@ -17,9 +17,9 @@
  * under the License.
  */
 
-import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, realpath, rmdir, stat } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { lstat, mkdir, mkdtemp, realpath } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
+import { isPathInside } from '@maka/runtime/path-containment';
 
 /**
  * How a Session cwd relates to the managed task-directory root:
@@ -39,12 +39,6 @@ export interface ManagedTaskDirectoryAuthority {
    * validated; the caller must not fall back to an implicit directory.
    */
   allocate(): Promise<string>;
-  /**
-   * Removes an allocation whose binding was never committed (e.g. the Session
-   * create or relocate failed). Best-effort and empty-directory only — a
-   * directory that somehow gained contents is left alone.
-   */
-  release(path: string): Promise<void>;
   classify(path: string): Promise<ManagedTaskDirectoryClass>;
 }
 
@@ -53,11 +47,9 @@ export interface ManagedTaskDirectoryDeps {
   readonly root: string;
   /**
    * Locations the managed root must not resolve into: application state,
-   * credentials, and installation files. Evaluated per call so callers can
-   * report lazily-initialized paths.
+   * credentials, and installation files.
    */
-  readonly reservedRoots?: () => readonly string[];
-  readonly newId?: () => string;
+  readonly reservedRoots?: readonly string[];
   /** Owner check; defaults to `process.getuid()` on POSIX. */
   readonly ownerUid?: () => number | undefined;
 }
@@ -65,7 +57,6 @@ export interface ManagedTaskDirectoryDeps {
 export function createManagedTaskDirectoryAuthority(
   deps: ManagedTaskDirectoryDeps,
 ): ManagedTaskDirectoryAuthority {
-  const newId = deps.newId ?? randomUUID;
   const ownerUid =
     deps.ownerUid ?? (() => (typeof process.getuid === 'function' ? process.getuid() : undefined));
 
@@ -81,9 +72,9 @@ export function createManagedTaskDirectoryAuthority(
       throw unmanagedTaskDirectoryError(`managed task directory root is owned by another user: ${root}`);
     }
     const canonicalRoot = await realpath(root);
-    for (const reserved of deps.reservedRoots?.() ?? []) {
+    for (const reserved of deps.reservedRoots ?? []) {
       const canonicalReserved = await realpath(reserved).catch(() => resolve(reserved));
-      if (isInsideOrSamePath(canonicalReserved, canonicalRoot)) {
+      if (isPathInside(canonicalReserved, canonicalRoot)) {
         throw unmanagedTaskDirectoryError(
           `managed task directory root resolves into a protected location: ${canonicalRoot}`,
         );
@@ -95,44 +86,23 @@ export function createManagedTaskDirectoryAuthority(
   return {
     async allocate() {
       const canonicalRoot = await prepareRoot();
-      for (const suffix of [newId().slice(0, 8), newId()]) {
-        const name = `task-${suffix}`;
-        const candidate = join(canonicalRoot, name);
-        try {
-          await mkdir(candidate, { mode: 0o700 });
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
-          throw error;
-        }
-        const candidateStat = await lstat(candidate);
-        if (!candidateStat.isDirectory() || candidateStat.isSymbolicLink()) {
-          throw unmanagedTaskDirectoryError(`managed task directory is not a real directory: ${candidate}`);
-        }
-        const canonical = await realpath(candidate);
-        if (!isInsideOrSamePath(canonicalRoot, canonical) || basename(canonical) !== name) {
-          throw unmanagedTaskDirectoryError(`managed task directory escaped its root: ${canonical}`);
-        }
-        return canonical;
+      const candidate = await mkdtemp(join(canonicalRoot, 'task-'));
+      const canonical = await realpath(candidate);
+      if (dirname(canonical) !== canonicalRoot || basename(canonical) !== basename(candidate)) {
+        throw unmanagedTaskDirectoryError(`managed task directory escaped its root: ${canonical}`);
       }
-      throw unmanagedTaskDirectoryError('managed task directory could not allocate a unique name');
-    },
-
-    async release(path) {
-      // `rmdir` fails on a non-empty directory by design: this only ever
-      // removes the empty directory the authority just created, never task
-      // output.
-      await rmdir(path).catch(() => undefined);
+      return canonical;
     },
 
     async classify(path) {
       const resolved = resolve(path);
       const canonical = await realpath(resolved).catch(() => resolved);
       const canonicalRoot = await realpath(resolve(deps.root)).catch(() => undefined);
-      if (canonicalRoot && isInsideOrSamePath(canonicalRoot, canonical)) return 'managed';
+      if (canonicalRoot && isPathInside(canonicalRoot, canonical)) return 'managed';
       if (dirname(canonical) === canonical) return 'suspicious';
-      for (const reserved of deps.reservedRoots?.() ?? []) {
+      for (const reserved of deps.reservedRoots ?? []) {
         const canonicalReserved = await realpath(reserved).catch(() => resolve(reserved));
-        if (isInsideOrSamePath(canonicalReserved, canonical)) return 'suspicious';
+        if (isPathInside(canonicalReserved, canonical)) return 'suspicious';
       }
       return 'other';
     },
@@ -141,15 +111,4 @@ export function createManagedTaskDirectoryAuthority(
 
 function unmanagedTaskDirectoryError(message: string): Error {
   return new Error(`Refusing to use a managed task directory: ${message}`);
-}
-
-function isInsideOrSamePath(root: string, target: string): boolean {
-  if (target === root) return true;
-  const rel = relative(root, target);
-  return (
-    rel !== '' &&
-    rel !== '..' &&
-    !rel.startsWith(`..${sep}`) &&
-    !rel.startsWith(sep)
-  );
 }

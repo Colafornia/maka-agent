@@ -18,7 +18,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -44,8 +44,7 @@ test('allocations never share a directory', async (t) => {
   t.after(() => rm(base, { recursive: true, force: true }));
   const authority = createManagedTaskDirectoryAuthority({ root: join(base, 'tasks') });
 
-  const first = await authority.allocate();
-  const second = await authority.allocate();
+  const [first, second] = await Promise.all([authority.allocate(), authority.allocate()]);
 
   assert.notEqual(first, second);
 });
@@ -71,7 +70,7 @@ test('refuses a managed root redirected into a reserved location', async (t) => 
   await symlink(reserved, join(parent, 'Maka'), process.platform === 'win32' ? 'junction' : 'dir');
   const authority = createManagedTaskDirectoryAuthority({
     root: join(parent, 'Maka', 'tasks'),
-    reservedRoots: () => [reserved],
+    reservedRoots: [reserved],
   });
 
   await assert.rejects(() => authority.allocate(), /managed task directory/i);
@@ -95,7 +94,7 @@ test('classifies managed, suspicious, and other bindings', async (t) => {
   const root = join(base, 'Maka', 'tasks');
   const authority = createManagedTaskDirectoryAuthority({
     root,
-    reservedRoots: () => [reserved],
+    reservedRoots: [reserved],
   });
 
   const managed = await authority.allocate();
@@ -103,19 +102,4 @@ test('classifies managed, suspicious, and other bindings', async (t) => {
   assert.equal(await authority.classify(join(reserved, 'deep', 'dir')), 'suspicious');
   assert.equal(await authority.classify('/'), 'suspicious');
   assert.equal(await authority.classify(join(base, 'elsewhere')), 'other');
-});
-
-test('release removes only the empty directory it was given', async (t) => {
-  const base = await mkdtemp(join(tmpdir(), 'maka-task-dir-'));
-  t.after(() => rm(base, { recursive: true, force: true }));
-  const authority = createManagedTaskDirectoryAuthority({ root: join(base, 'tasks') });
-
-  const directory = await authority.allocate();
-  await authority.release(directory);
-  await assert.rejects(() => stat(directory));
-
-  const occupied = await authority.allocate();
-  await writeFile(join(occupied, 'artifact.txt'), 'task output');
-  await authority.release(occupied);
-  assert.ok((await stat(occupied)).isDirectory());
 });
