@@ -106,9 +106,17 @@ export function createProjectManagementService(deps: {
     if (!requested) {
       if (typeof selectedProjectId === 'string') {
         deps.selection.setSelection(null, selection.path);
-        return { projectId: null, path: selection.path };
+        return {
+          projectId: null,
+          path: selection.path,
+          ...(selection.pathSource ? { pathSource: selection.pathSource } : {}),
+        };
       }
-      return { projectId: undefined, path: selection.path };
+      return {
+        projectId: undefined,
+        path: selection.path,
+        ...(selection.pathSource ? { pathSource: selection.pathSource } : {}),
+      };
     }
     const path = requested.preferredPath ?? selection.path;
     deps.selection.setSelection(requested.id, path);

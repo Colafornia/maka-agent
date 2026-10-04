@@ -173,6 +173,7 @@ import {
   createProjectRootController,
   type ProjectRootController,
 } from "./project-root-controller.js";
+import { createManagedTaskDirectoryAuthority } from "./managed-task-directory.js";
 import { createSessionCopyCleanupAuthority } from "@maka/storage/session-copy-cleanup";
 import {
   projectHostConnections,
@@ -442,6 +443,21 @@ mainWindowDelegates.onMainWindowClose = () => {
   native.computerUsePip.destroyAll();
 };
 const attachmentApprovals = createAttachmentApprovalRegistry();
+/**
+ * Dedicated task directories live in the user-owned `~/Maka/tasks` root —
+ * deliberately separate from `userData` (settings, credentials, session
+ * state) and from the install location. The e2e fixture redirects the root
+ * under its isolated workspace so tests never touch real user directories;
+ * inside that sandbox the Client-data reserved roots no longer apply.
+ */
+const managedTaskDirectories = createManagedTaskDirectoryAuthority({
+  root: e2eFixture
+    ? join(workspaceRoot, 'task-directories')
+    : join(app.getPath('home'), app.getName(), 'tasks'),
+  reservedRoots: e2eFixture
+    ? () => [app.getAppPath()]
+    : () => [userDataDir, workspaceRoot, app.getAppPath()],
+});
 const sessionLocalStore = new DesktopSessionLocalStore(join(userDataDir, 'session-experience.sqlite'));
 const localSessionChanged = createSessionLocalChangedEmitter({
   send: (channel, scope, payload) => mainWindowController.send(channel, scope, payload),
@@ -464,6 +480,7 @@ registerDesktopSessionLocalIpc({
     if (!context?.isActive()) throw new Error('Select a cached project before creating an offline task');
     return resolveDesktopSessionWorkspace(input, context.projectManagement, context.projectCatalog, {
       allowHostPath: !runtimeHostProfileUsesHostWorkspace(context.policy.kind),
+      allocateDedicatedDirectory: () => managedTaskDirectories.allocate(),
     });
   },
 });
@@ -729,11 +746,18 @@ const selectedDesktopWorkspaceTarget = async (
 const currentDesktopWorkspaceTarget = async (
   target: DesktopRuntimeHostTargetPolicy,
 ): Promise<WorkspaceTarget> => {
-  const workspace = await selectedDesktopWorkspaceTarget(target);
-  if (!workspace) {
+  const currentTarget = requireRuntimePolicyTarget(target);
+  const current = await currentTarget.projectManagement.current();
+  if (typeof current.projectId === "string") {
+    return { kind: "project", projectId: current.projectId };
+  }
+  if (runtimeHostProfileUsesHostWorkspace(target.kind)) {
     throw new Error("Select a project from the Runtime Host first");
   }
-  return workspace;
+  if (current.pathSource === "configured") {
+    return { kind: "host_path", path: current.path };
+  }
+  return { kind: "host_path", path: await managedTaskDirectories.allocate() };
 };
 const requireWorkHubTarget = (scope: DesktopTargetScope): DesktopRuntimeHostTargetContext => {
   const target = runtimePolicyTargetsByEpoch.get(scope.targetEpoch);
@@ -1148,9 +1172,13 @@ const createLocalRuntimeHostManager = () => createRuntimeHostDesktopManager(
             : {}),
         },
         currentTarget.projectCatalog,
-        { allowHostPath: !runtimeHostProfileUsesHostWorkspace(target.kind) },
+        {
+          allowHostPath: !runtimeHostProfileUsesHostWorkspace(target.kind),
+          allocateDedicatedDirectory: () => managedTaskDirectories.allocate(),
+        },
       );
     },
+    taskDirectories: managedTaskDirectories,
     resolveExternalSessionImportWorkspace: (target) =>
       currentDesktopWorkspaceTarget(target),
     emitSessionsChanged,
@@ -1747,6 +1775,15 @@ function registerHostClientIpc(
       e2eFixture,
       projectManagement: targetProjectManagement,
       allowLocalProjectPaths: !usesHostWorkspace,
+      getSessionTaskDirectoryBinding: usesHostWorkspace
+        ? undefined
+        : async (sessionId) => {
+            const session = await client.getSession(sessionId);
+            if (!session || session.workspace.target.kind !== 'host_path') {
+              return undefined;
+            }
+            return managedTaskDirectories.classify(session.workspace.hostCwd);
+          },
     },
     scopedIpc,
   );

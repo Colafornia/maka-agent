@@ -50,6 +50,12 @@ export function createDesktopTaskEntryServices(
           ? { ok: true as const }
           : { ok: false as const, reason: result.code };
       },
+      async relocateToDedicatedDirectory(sessionId) {
+        const result = await bridge.sessions.moveToDedicatedDirectory(sessionId);
+        return result.ok
+          ? { ok: true as const, ...(result.directory ? { directory: result.directory } : {}) }
+          : { ok: false as const, reason: result.code };
+      },
     },
     folders: {
       // A task's folder opens through the task; anything else through the

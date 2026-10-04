@@ -155,6 +155,16 @@ export interface DesktopRuntimeHostCandidateDeps {
   readonly resolveExternalSessionImportWorkspace: (
     target: DesktopRuntimeHostTargetPolicy,
   ) => Promise<WorkspaceTarget>;
+  /**
+   * Dedicated task-directory authority on the Client filesystem. Wired only
+   * for targets that resolve workspaces there; remote Hosts see `undefined`
+   * and refuse dedicated-directory relocation.
+   */
+  readonly taskDirectories?: {
+    allocate(): Promise<string>;
+    classify(path: string): Promise<'managed' | 'suspicious' | 'other'>;
+    release(path: string): Promise<void>;
+  };
   readonly emitSessionsChanged: (
     scope: DesktopTargetScope,
     reason: SessionChangedReason,
@@ -894,6 +904,9 @@ export async function createDesktopRuntimeHostCandidate(
           queryExecutors: (input) => client.request('plugin.executor.query', input),
           runningTurnIds: (sessionId) => sessionObserver.observedRunningTurnIds(sessionId),
           resolveCreateProject: (input) => deps.resolveSessionCreateProject(input, target),
+          ...(deps.taskDirectories && !runtimeHostProfileUsesHostWorkspace(target.kind)
+            ? { dedicatedTaskDirectory: deps.taskDirectories }
+            : {}),
           emitSessionsChanged,
           releaseSessionResources: releaseNativeSession,
           sessionCopyCleanup,

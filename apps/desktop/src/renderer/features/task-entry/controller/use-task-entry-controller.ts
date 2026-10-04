@@ -105,6 +105,15 @@ export interface TaskEntryControllerCommands {
     profileId: string;
     projectId: string;
   }): Promise<boolean>;
+  /**
+   * The explicit per-task correction for an unsafe inherited directory:
+   * rebinds the Session to a fresh dedicated task directory. Resolves to the
+   * outcome — `undefined` means refused (already reported), an object carries
+   * the directory it landed on when the Host named it.
+   */
+  moveSessionToDedicatedDirectory(
+    sessionId: string,
+  ): Promise<{ readonly directory?: string } | undefined>;
   addSessionWorkspace(input: {
     sessionId: string;
     profileId: string;
@@ -358,6 +367,43 @@ export function useTaskEntryController(
         profileId: input.profileId,
       });
       return false;
+    }
+  }, [
+    closeSessionWorkspaceRecovery,
+    copy.projectUpdateFailedFallback,
+    copy.projectUpdateFailedTitle,
+    locale,
+    reportError,
+    sessionMoveCopy,
+    sessionService,
+  ]);
+
+  const moveSessionToDedicatedDirectory = useCallback(async (
+    sessionId: string,
+  ): Promise<{ readonly directory?: string } | undefined> => {
+    try {
+      const result = await sessionService.relocateToDedicatedDirectory(sessionId);
+      if (!result.ok) {
+        reportError({
+          title: sessionMoveCopy.moveFailedTitle,
+          description: sessionMoveCopy.moveFailures[result.reason],
+          sessionId,
+        });
+        return undefined;
+      }
+      closeSessionWorkspaceRecovery();
+      return result.directory === undefined ? {} : { directory: result.directory };
+    } catch (cause) {
+      reportError({
+        title: copy.projectUpdateFailedTitle,
+        description: localizedShellErrorMessage(
+          cause,
+          copy.projectUpdateFailedFallback,
+          locale,
+        ),
+        sessionId,
+      });
+      return undefined;
     }
   }, [
     closeSessionWorkspaceRecovery,
@@ -802,6 +848,7 @@ export function useTaskEntryController(
       openSessionWorkspaceRecovery,
       closeSessionWorkspaceRecovery,
       relocateSessionWorkspace,
+      moveSessionToDedicatedDirectory,
       addSessionWorkspace,
       resolveWorkBoardTarget,
       prepareWorkBoardDraft,
@@ -854,6 +901,7 @@ export function useTaskEntryController(
     service,
     resolveWorkBoardTarget,
     relocateSessionWorkspace,
+    moveSessionToDedicatedDirectory,
     prepareWorkBoardDraft,
     selectedHost,
     selectedHostProjection,

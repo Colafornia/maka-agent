@@ -103,6 +103,63 @@ test('falls back to the current Host path when no Project preference exists', as
   );
 });
 
+test('allocates a dedicated directory for a projectless task on an implicit path', async () => {
+  const allocated: string[] = [];
+  const options = {
+    allocateDedicatedDirectory: async () => {
+      allocated.push('x');
+      return '/tasks/task-a1b2c3d4';
+    },
+  };
+  assert.deepEqual(
+    await resolveDesktopSessionWorkspace(
+      { projectId: null },
+      selection({ current: { projectId: null, path: '/' } }),
+      { register: unexpected },
+      options,
+    ),
+    { kind: 'host_path', path: '/tasks/task-a1b2c3d4' },
+  );
+  assert.deepEqual(
+    await resolveDesktopSessionWorkspace(
+      {},
+      selection({ current: { projectId: undefined, path: '/' } }),
+      { register: unexpected },
+      options,
+    ),
+    { kind: 'host_path', path: '/tasks/task-a1b2c3d4' },
+  );
+  assert.equal(allocated.length, 2);
+});
+
+test('keeps a configured default directory ahead of dedicated allocation', async () => {
+  assert.deepEqual(
+    await resolveDesktopSessionWorkspace(
+      {},
+      selection({ current: { projectId: null, path: '/configured', pathSource: 'configured' } }),
+      { register: unexpected },
+      {
+        allocateDedicatedDirectory: async () => {
+          throw new Error('configured default must keep its precedence');
+        },
+      },
+    ),
+    { kind: 'host_path', path: '/configured' },
+  );
+});
+
+test('an explicit no-Project directory stays explicit and never allocates', async () => {
+  assert.deepEqual(
+    await resolveDesktopSessionWorkspace(
+      { cwd: '/standalone', projectId: null },
+      selection(),
+      { register: unexpected },
+      { allocateDedicatedDirectory: unexpected },
+    ),
+    { kind: 'host_path', path: '/standalone' },
+  );
+});
+
 test('requires a Host Project for remote session creation', async () => {
   await assert.rejects(
     () =>
@@ -127,7 +184,11 @@ test('requires a Host Project for remote session creation', async () => {
 
 function selection(
   options: {
-    readonly current?: { readonly projectId: string | null | undefined; readonly path: string };
+    readonly current?: {
+      readonly projectId: string | null | undefined;
+      readonly path: string;
+      readonly pathSource?: 'configured' | 'implicit';
+    };
     readonly defaultProjectId?: string;
     readonly unavailableIds?: readonly string[];
   } = {},

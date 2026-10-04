@@ -26,6 +26,7 @@ import {
   toDesktopHostSessionSummary,
   type RuntimeHostSessionCatalogIpcDeps,
 } from '../runtime-host-session-catalog-ipc-main.js';
+import { DesktopRuntimeHostClientError } from '../runtime-host-client.js';
 
 test('maps Runtime Host live run state without collapsing unknown and known-empty', () => {
   const unknown = toDesktopHostSessionSummary(projection());
@@ -81,6 +82,104 @@ test('session creation forwards a plugin executor model without a native model t
       llmConnectionSlug: 'openai',
     }),
     /cannot include a model connection/,
+  );
+});
+
+test('moves a projectless Session into a dedicated directory with one CAS commit', async () => {
+  const ipc = ipcHarness();
+  const relocations: unknown[] = [];
+  const released: string[] = [];
+  const deps = createDeps([]);
+  deps.client = {
+    getSession: async (id: string) => projection({ id, revision: 3 }),
+    relocateSessionWorkspace: async (sessionId: string, revision: number, workspace: { kind: 'host_path'; path: string }) => {
+      relocations.push([sessionId, revision, workspace]);
+      return projection({
+        id: sessionId,
+        revision: revision + 1,
+        workspace: { target: workspace, hostCwd: workspace.path },
+      });
+    },
+  } as unknown as RuntimeHostSessionCatalogIpcDeps['client'];
+  deps.dedicatedTaskDirectory = {
+    allocate: async () => '/tasks/task-1',
+    classify: async () => 'managed',
+    release: async (path) => { released.push(path); },
+  };
+  registerRuntimeHostSessionCatalogIpc(deps, ipc as unknown as IpcMain);
+
+  const result = (await ipc.invoke('sessions:moveToDedicatedDirectory', 'session-1')) as {
+    ok: boolean;
+    directory?: string;
+  };
+
+  assert.equal(result.ok, true);
+  assert.equal(result.directory, '/tasks/task-1');
+  assert.deepEqual(relocations, [
+    ['session-1', 3, { kind: 'host_path', path: '/tasks/task-1' }],
+  ]);
+  assert.deepEqual(released, []);
+});
+
+test('refuses a Project-bound Session and releases the allocation', async () => {
+  const ipc = ipcHarness();
+  const released: string[] = [];
+  const deps = createDeps([]);
+  deps.client = {
+    getSession: async (id: string) => projection({
+      id,
+      workspace: { target: { kind: 'project', projectId: 'project-1' }, hostCwd: '/repo' },
+    }),
+  } as unknown as RuntimeHostSessionCatalogIpcDeps['client'];
+  deps.dedicatedTaskDirectory = {
+    allocate: async () => '/tasks/task-1',
+    classify: async () => 'managed',
+    release: async (path) => { released.push(path); },
+  };
+  registerRuntimeHostSessionCatalogIpc(deps, ipc as unknown as IpcMain);
+
+  const result = (await ipc.invoke('sessions:moveToDedicatedDirectory', 'session-1')) as {
+    ok: boolean;
+    code?: string;
+  };
+
+  assert.deepEqual(result, { ok: false, code: 'operation_unavailable' });
+  assert.deepEqual(released, ['/tasks/task-1']);
+});
+
+test('releases the allocation when the relocation commit is refused', async () => {
+  const ipc = ipcHarness();
+  const released: string[] = [];
+  const deps = createDeps([]);
+  deps.client = {
+    getSession: async (id: string) => projection({ id, revision: 5 }),
+    relocateSessionWorkspace: async () => {
+      throw new DesktopRuntimeHostClientError('revision_conflict', 'stale revision');
+    },
+  } as unknown as RuntimeHostSessionCatalogIpcDeps['client'];
+  deps.dedicatedTaskDirectory = {
+    allocate: async () => '/tasks/task-1',
+    classify: async () => 'managed',
+    release: async (path) => { released.push(path); },
+  };
+  registerRuntimeHostSessionCatalogIpc(deps, ipc as unknown as IpcMain);
+
+  const result = (await ipc.invoke('sessions:moveToDedicatedDirectory', 'session-1')) as {
+    ok: boolean;
+    code?: string;
+  };
+
+  assert.deepEqual(result, { ok: false, code: 'operation_conflict' });
+  assert.deepEqual(released, ['/tasks/task-1']);
+});
+
+test('refuses dedicated-directory relocation without an authority', async () => {
+  const ipc = ipcHarness();
+  registerRuntimeHostSessionCatalogIpc(createDeps([]), ipc as unknown as IpcMain);
+
+  await assert.rejects(
+    () => ipc.invoke('sessions:moveToDedicatedDirectory', 'session-1'),
+    /Dedicated task directories are unavailable/,
   );
 });
 

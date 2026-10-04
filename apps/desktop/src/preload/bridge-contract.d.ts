@@ -352,6 +352,24 @@ export type DesktopSessionStopResult =
   | { kind: 'interrupted'; retractedMessageIds: string[] }
   | undefined;
 
+/**
+ * How a projectless Session's bound directory relates to the Client's
+ * dedicated task-directory root:
+ * - `managed`: inside the dedicated root — the policy's steady state.
+ * - `suspicious`: `reserved` or `symlink_redirect` — a binding that cannot be
+ *   a deliberate user choice and warrants a repair offer.
+ * - `other`: a real path outside the root — possibly intentional, possibly
+ *   inherited; correctable but not flagged.
+ */
+export type TaskDirectoryBinding = 'managed' | 'suspicious' | 'other';
+
+/**
+ * `moveToDedicatedDirectory` reports the directory the Session was bound to
+ * alongside the standard update result.
+ */
+export type DesktopSessionDedicatedDirectoryResult =
+  DesktopSessionUpdateResult<DesktopSessionSummary> & { readonly directory?: string };
+
 /** Cancellation proof aggregated across every Runtime Host query batch. */
 export interface DesktopMessageCancellationQueryResult {
   readonly cancelledMessageIds: readonly string[];
@@ -1358,6 +1376,13 @@ export interface MakaBridge {
      * archived Session.
      */
     moveToProject(sessionId: string, projectId: string | null): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>>;
+    /**
+     * Explicit per-task correction: rebinds this Session's workspace to a
+     * fresh dedicated task directory. Preserves every relocation safeguard of
+     * `moveToProject` (busy/archived/CAS); refuses on Hosts that cannot
+     * provision Client directories.
+     */
+    moveToDedicatedDirectory(sessionId: string): Promise<DesktopSessionDedicatedDirectoryResult>;
     setPermissionMode(sessionId: string, mode: PermissionMode): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>>;
     /**
      * Enter or leave Plan — a temporary collaboration excursion Runtime ends
@@ -1937,6 +1962,7 @@ export interface MakaBridge {
     sessionProjectInfo(sessionId: string): Promise<{
       projectPath: string;
       projectGit: { isGitRepo: boolean; branch?: string };
+      taskDirectory?: TaskDirectoryBinding;
     }>;
     openPath(
       key: 'workspace' | 'memory' | 'project',

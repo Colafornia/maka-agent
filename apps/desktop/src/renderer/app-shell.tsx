@@ -694,6 +694,39 @@ function AppShellContent({
     () => taskEntry.commands.openProjectFolder(ownerActiveId),
     [taskEntry.commands, ownerActiveId],
   );
+  /**
+   * The explicit per-task correction: rebinds the active Session to a fresh
+   * dedicated task directory through the Runtime Host's relocation authority.
+   * On success the catalog refresh re-reads the binding class and both the
+   * banner and the menu item retire themselves.
+   */
+  const moveSessionToDedicatedDirectory = useCallback(async () => {
+    const sessionId = ownerActiveId;
+    if (!sessionId) return;
+    // Task Entry reports refusals and failures itself; only success lands here.
+    const result = await taskEntry.commands.moveSessionToDedicatedDirectory(sessionId);
+    if (!result) return;
+    toastApi.toast({
+      title: shellCopy.taskDirectoryMovedTitle,
+      ...(result.directory
+        ? { description: shellCopy.taskDirectoryMovedDescription(result.directory) }
+        : {}),
+    });
+  }, [ownerActiveId, shellCopy, taskEntry.commands, toastApi]);
+  // The proactive repair prompt: only a binding that cannot be a deliberate
+  // choice (filesystem root, inside the install or app state, a redirected
+  // path) earns a banner — 'other' stays reachable through the task menu.
+  const taskDirectoryNotice =
+    !sharedSessionActive &&
+    activeSession &&
+    projectInfo?.taskDirectory === 'suspicious'
+      ? {
+          title: shellCopy.taskDirectorySuspiciousTitle,
+          description: shellCopy.taskDirectorySuspiciousDescription,
+          actionLabel: shellCopy.taskDirectoryMoveLabel,
+          onAction: () => void moveSessionToDedicatedDirectory(),
+        }
+      : undefined;
   const captureActiveComposerClaim = useCallback(() => {
     const sessionId = activeIdRef.current;
     const claim = navSelectionRef.current.section === 'sessions' && sessionId
@@ -1266,6 +1299,18 @@ function AppShellContent({
                         onClick: () => sharedSessionDialog.openSession(activeSession),
                       }
                 }
+                actions={
+                  !sharedSessionActive &&
+                  projectInfo?.taskDirectory !== undefined &&
+                  projectInfo.taskDirectory !== 'managed'
+                    ? [
+                        {
+                          label: shellCopy.taskDirectoryMoveLabel,
+                          onClick: () => void moveSessionToDedicatedDirectory(),
+                        },
+                      ]
+                    : undefined
+                }
                 onRenameSession={(name) => {
                   void sessionNavigationCommandsRef.current?.renameSession(activeSessionForView.id, name);
                 }}
@@ -1496,6 +1541,7 @@ function AppShellContent({
                     : undefined
                 }
                 sessionHealthNotice={sessionHealthNotice}
+                taskDirectoryNotice={taskDirectoryNotice}
                 localInteractionAvailable={activeBoundarySurface.localInteractionAvailable}
                 workspaceReadinessRecovery={workspaceReadinessRecovery}
                 showOnboardingHero={showOnboardingHero}

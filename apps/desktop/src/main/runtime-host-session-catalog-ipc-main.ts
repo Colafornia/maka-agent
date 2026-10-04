@@ -81,6 +81,16 @@ export interface RuntimeHostSessionCatalogIpcDeps {
   resolveCreateProject: (
     input: Pick<CreateSessionRequestInput, 'cwd' | 'projectId'>,
   ) => Promise<WorkspaceTarget>;
+  /**
+   * Dedicated task-directory authority for the explicit relocation
+   * correction. Absent on Hosts that cannot provision Client directories —
+   * the IPC then refuses rather than guessing.
+   */
+  dedicatedTaskDirectory?: {
+    allocate(): Promise<string>;
+    classify(path: string): Promise<'managed' | 'suspicious' | 'other'>;
+    release(path: string): Promise<void>;
+  };
   emitSessionsChanged: (
     reason: SessionChangedReason,
     sessionId?: string,
@@ -152,7 +162,23 @@ export function registerRuntimeHostSessionCatalogIpc(
       ...(input?.cwd === undefined ? {} : { cwd: input.cwd }),
       ...(input?.projectId === undefined ? {} : { projectId: input.projectId }),
     });
-    const session = await deps.client.createSession(resolveDesktopSessionCreateInput(input, newId(), workspace));
+    let session: SessionCatalogProjection;
+    try {
+      session = await deps.client.createSession(resolveDesktopSessionCreateInput(input, newId(), workspace));
+    } catch (error) {
+      // A dedicated allocation whose create was refused stays an empty dir;
+      // hand it back to the authority. Only managed paths qualify — an
+      // explicit user directory is never removed, empty or not.
+      const authority = deps.dedicatedTaskDirectory;
+      if (
+        workspace.kind === 'host_path' &&
+        authority &&
+        (await authority.classify(workspace.path)) === 'managed'
+      ) {
+        await authority.release(workspace.path);
+      }
+      throw error;
+    }
     deps.emitSessionsChanged('created', session.id);
     return toDesktopHostSessionSummary(session);
   });
@@ -280,6 +306,9 @@ export function registerRuntimeHostSessionCatalogIpc(
       return moveSessionToProject(deps, sessionId, projectId);
     },
   );
+  ipcMain.handle('sessions:moveToDedicatedDirectory', async (_event, sessionId: string) =>
+    moveSessionToDedicatedDirectory(deps, sessionId),
+  );
 }
 
 /**
@@ -326,6 +355,61 @@ async function moveSessionToProject(
   }
   deps.emitSessionsChanged('updated', sessionId);
   return { ok: true, session: toDesktopHostSessionSummary(session) };
+}
+
+/**
+ * The explicit correction for a Session bound to an unintended implicit
+ * directory: allocate a dedicated task directory, then rebind through the
+ * same `session.workspace.relocate` authority `moveToProject` uses — one
+ * revision read, one compare-and-set commit, and no project re-pointing.
+ *
+ * The directory is created before the relocate because the Host requires the
+ * target to already exist. If the commit is refused or fails the fresh
+ * directory is released again, so a rejected correction leaves nothing
+ * behind.
+ */
+async function moveSessionToDedicatedDirectory(
+  deps: RuntimeHostSessionCatalogIpcDeps,
+  sessionId: string,
+): Promise<DesktopSessionUpdateResult<DesktopHostSessionSummary> & { directory?: string }> {
+  const authority = deps.dedicatedTaskDirectory;
+  if (!authority) {
+    throw new Error('Dedicated task directories are unavailable on this Runtime Host');
+  }
+  let session: SessionCatalogProjection;
+  const directory = await authority.allocate();
+  try {
+    const current = await deps.client.getSession(sessionId);
+    if (!current) {
+      throw new DesktopRuntimeHostClientError(
+        'session_not_found',
+        `No such Session: ${sessionId}`,
+      );
+    }
+    // A Project-bound Session relocates through `moveToProject` — this
+    // correction is only for a projectless Host-path binding, so dropping a
+    // Project association here can never be an accident.
+    if (current.workspace.target.kind !== 'host_path') {
+      await authority.release(directory);
+      return { ok: false, code: 'operation_unavailable' };
+    }
+    session = await deps.client.relocateSessionWorkspace(
+      sessionId,
+      current.revision,
+      { kind: 'host_path', path: directory },
+    );
+  } catch (error) {
+    await authority.release(directory);
+    const code = updateFailureCode(error);
+    if (code) return { ok: false, code };
+    throw error;
+  }
+  deps.emitSessionsChanged('updated', sessionId);
+  return {
+    ok: true,
+    session: toDesktopHostSessionSummary(session),
+    directory: session.workspace.hostCwd,
+  };
 }
 
 /**
