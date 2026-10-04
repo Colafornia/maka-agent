@@ -51,7 +51,6 @@ import {
   type TurnFooterActionMeta,
   useToast,
   deriveComposerModelSwitchAvailability,
-  deriveTitlebarProjectName,
 } from '@maka/ui';
 import type { ConnectionEvent } from '@maka/core/connections';
 import { ChatMessageSurface } from './chat-message-surface';
@@ -676,6 +675,10 @@ function AppShellContent({
         }
       : undefined;
   const moduleHubCommands = useMemo(ModuleHub.createModuleHubCommandPort, []);
+  const openProjectFolder = useCallback(
+    () => taskEntry.commands.openProjectFolder(ownerActiveId),
+    [taskEntry.commands, ownerActiveId],
+  );
   const {
     projectInfo,
     projectCapabilities,
@@ -683,50 +686,24 @@ function AppShellContent({
     currentProjectId,
     currentProject,
     refreshProjects,
+    titlebarSession,
+    taskDirectoryNotice,
   } = useAppShellProjectContext({
     rendererMountedRef,
     sessionId: ownerActiveId,
     sessionCwd: sharedSessionActive ? undefined : activeSession?.cwd,
     sessionProjectId: sharedSessionActive ? undefined : activeSession?.projectId,
     sessionProfileKind: sharedSessionActive ? undefined : activeSession?.profileKind,
+    titlebar: {
+      sharedSessionActive,
+      activeSession,
+      sharedSessionDialog,
+      moveToDedicatedDirectory: taskEntry.commands.moveSessionToDedicatedDirectory,
+      openProjectFolder,
+      copy: shellCopy,
+      toastApi,
+    },
   });
-  const openProjectFolder = useCallback(
-    () => taskEntry.commands.openProjectFolder(ownerActiveId),
-    [taskEntry.commands, ownerActiveId],
-  );
-  /**
-   * The explicit per-task correction: rebinds the active Session to a fresh
-   * dedicated task directory through the Runtime Host's relocation authority.
-   * On success the catalog refresh re-reads the binding class and both the
-   * banner and the menu item retire themselves.
-   */
-  const moveSessionToDedicatedDirectory = useCallback(async () => {
-    const sessionId = ownerActiveId;
-    if (!sessionId) return;
-    // Task Entry reports refusals and failures itself; only success lands here.
-    const result = await taskEntry.commands.moveSessionToDedicatedDirectory(sessionId);
-    if (!result) return;
-    toastApi.toast({
-      title: shellCopy.taskDirectoryMovedTitle,
-      ...(result.directory
-        ? { description: shellCopy.taskDirectoryMovedDescription(result.directory) }
-        : {}),
-    });
-  }, [ownerActiveId, shellCopy, taskEntry.commands, toastApi]);
-  // The proactive repair prompt: only a binding that cannot be a deliberate
-  // choice (filesystem root, inside the install or app state, a redirected
-  // path) earns a banner — 'other' stays reachable through the task menu.
-  const taskDirectoryNotice =
-    !sharedSessionActive &&
-    activeSession &&
-    projectInfo?.taskDirectory === 'suspicious'
-      ? {
-          title: shellCopy.taskDirectorySuspiciousTitle,
-          description: shellCopy.taskDirectorySuspiciousDescription,
-          actionLabel: shellCopy.taskDirectoryMoveLabel,
-          onAction: () => void moveSessionToDedicatedDirectory(),
-        }
-      : undefined;
   const captureActiveComposerClaim = useCallback(() => {
     const sessionId = activeIdRef.current;
     const claim = navSelectionRef.current.section === 'sessions' && sessionId
@@ -751,15 +728,6 @@ function AppShellContent({
   };
   const taskSubmissionHardBlocked =
     !activeId && !taskEntry.selectors.target;
-  // The titlebar names the directory the ACTIVE session runs in, so it reads
-  // the same projected project state the picker does — `projectInfo` already
-  // resolves to the session's own cwd once a session owns it.
-  const titlebarProjectName = sharedSessionActive
-    ? undefined
-    : deriveTitlebarProjectName({
-        projectName: currentProject?.name,
-        projectPath: projectInfo?.projectPath,
-      });
   const openNewTaskSurface = useCallback(() => {
     composerStaging.resetImageNotice(NEW_TASK_PENDING_KEY);
     const ownerToken = startNewSession();
@@ -1289,40 +1257,12 @@ function AppShellContent({
                 key={activeSessionForView.id}
                 sessionName={activeSessionForView.name}
                 readOnly={sharedSessionActive}
-                action={
-                  sharedSessionActive ||
-                  !activeSession ||
-                  activeSession.profileKind === 'environment'
-                    ? undefined
-                    : {
-                        label: sharedSessionDialog.shareActionLabel,
-                        onClick: () => sharedSessionDialog.openSession(activeSession),
-                      }
-                }
-                actions={
-                  !sharedSessionActive &&
-                  projectInfo?.taskDirectory !== undefined &&
-                  projectInfo.taskDirectory !== 'managed'
-                    ? [
-                        {
-                          label: shellCopy.taskDirectoryMoveLabel,
-                          onClick: () => void moveSessionToDedicatedDirectory(),
-                        },
-                      ]
-                    : undefined
-                }
+                action={titlebarSession.action}
+                actions={titlebarSession.actions}
                 onRenameSession={(name) => {
                   void sessionNavigationCommandsRef.current?.renameSession(activeSessionForView.id, name);
                 }}
-                project={
-                  titlebarProjectName
-                    ? {
-                        name: titlebarProjectName,
-                        path: projectInfo?.projectPath,
-                        onOpenFolder: activeProjectCapabilities.viewClientPath ? openProjectFolder : undefined,
-                      }
-                    : undefined
-                }
+                project={titlebarSession.project}
                 parentSession={titlebarParentSession}
               />
             )}
