@@ -43,7 +43,7 @@ import { TOOL_RECOVERY_DECISION_FACT_KIND } from '@maka/core/tool-recovery-fact'
 import { canonicalToolArgsHash } from '@maka/core/tool-args-identity';
 import {
   buildHistoryCompactCheckpoint,
-  historyCompactSourceDigest,
+  checkHistoryCompactCheckpointCurrency,
   matchHistoryCompactCheckpointPrefix,
   validateHistoryCompactCheckpointShape,
 } from './history-compact-checkpoint.js';
@@ -1144,17 +1144,18 @@ function cloneAgentRunEvent(
     const match = matchHistoryCompactCheckpointPrefix(sourceCheckpoint, sourceCompactableEvents);
     if (match.reason) return null;
     // Rebinding a digest must not make an already stale source summary valid.
-    const sourceEffective = reduceEffectiveModelProjections(
-      match.coveredRuntimeEvents,
-      [...clonedTransitions.keys()].map((record) =>
-        decodeModelProjectionTransition(record.data?.transition, record.sessionId),
-      ),
-    ).events;
-    if (
-      sourceCheckpoint.coverage.effectiveSourceDigest !==
-      historyCompactSourceDigest(sourceEffective)
-    )
-      return null;
+    const currency = checkHistoryCompactCheckpointCurrency(
+      sourceCheckpoint,
+      sourceCompactableEvents,
+      {
+        transitions: [...clonedTransitions.keys()].map((record) =>
+          decodeModelProjectionTransition(record.data?.transition, record.sessionId),
+        ),
+        unreadableTargets: new Set<string>(),
+        unscopedUnreadable: 0,
+      },
+    );
+    if (currency.status !== 'current') return null;
     // Copy is an admission seam for the sectioned summary contract: a marked
     // checkpoint whose summary no longer satisfies the COMPLETE predicate —
     // re-runnable here on structure and truncation (the size floor needs the

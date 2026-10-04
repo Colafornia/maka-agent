@@ -26,12 +26,22 @@ import {
   canContinueHistoryCompactCheckpointForModel,
   canReplayHistoryCompactCheckpointForModel,
   canReplaceHistoryCompactCheckpoint,
+  checkHistoryCompactCheckpointCurrency,
   historyCompactCheckpointToModelMessage,
   historyCompactCheckpointToRuntimeEvent,
+  historyCompactSourceDigest,
   isProviderHistoryCompactCheckpoint,
   matchHistoryCompactCheckpointPrefix,
   validateHistoryCompactCheckpointShape,
+  type HistoryCompactCheckpoint,
 } from '../history-compact-checkpoint.js';
+import { buildModelProjectionTransition } from '@maka/core/model-projection-transition';
+import type { DurableToolResultProjection } from '@maka/core/durable-tool-result-projection';
+import { compatibilityToolResultProjection } from '../durable-tool-result-projection.js';
+import {
+  reduceEffectiveModelProjections,
+  type LoadedModelProjectionTransitions,
+} from '../model-projection-transition-ledger.js';
 import {
   loadHistoryCompactCheckpointsFromRunLedger,
   loadLatestHistoryCompactCheckpointFromRunLedger,
@@ -985,6 +995,230 @@ describe('history compact checkpoint', () => {
       [`history-compact:${checkpoint.checkpointId}`, 'event-4', 'event-directory-only'],
     );
   });
+});
+
+/**
+ * The shared checkpoint-currency decision (#5930): raw prefix identity first,
+ * then the covered span folded through the CALLER-SUPPLIED projection snapshot
+ * and compared against coverage.effectiveSourceDigest. The function does not
+ * load transitions — the same event list judged under two different snapshots
+ * must be able to disagree.
+ */
+describe('checkHistoryCompactCheckpointCurrency', () => {
+  const EMPTY_SNAPSHOT: LoadedModelProjectionTransitions = {
+    transitions: [],
+    unreadableTargets: new Set<string>(),
+    unscopedUnreadable: 0,
+  };
+
+  function checkpointOver(
+    covered: readonly RuntimeEvent[],
+    effectiveCovered?: readonly RuntimeEvent[],
+  ): HistoryCompactCheckpoint {
+    return buildHistoryCompactCheckpoint({
+      sessionId: 'session-1',
+      coveredRuntimeEvents: covered,
+      ...(effectiveCovered ? { effectiveCoveredRuntimeEvents: effectiveCovered } : {}),
+      summary: sectionedSummary('checkpoint summary'),
+    });
+  }
+
+  test('reports the raw-mismatch reason without touching the projection', () => {
+    const covered = [textEvent(0), textEvent(1), textEvent(2)];
+    const checkpoint = checkpointOver(covered);
+
+    for (const [name, events, reason] of [
+      ['shorter event list', [textEvent(0), textEvent(1)], 'coverage_miss'],
+      [
+        'different covered boundary identity',
+        [textEvent(0), textEvent(1), { ...textEvent(2), id: 'event-elsewhere' }],
+        'coverage_miss',
+      ],
+      [
+        'same identity but mutated covered content',
+        [textEvent(0), { ...textEvent(1), ts: textEvent(1).ts + 1 }, textEvent(2)],
+        'source_hash_mismatch',
+      ],
+    ] as const) {
+      const result = checkHistoryCompactCheckpointCurrency(checkpoint, events, EMPTY_SNAPSHOT);
+      assert.deepEqual(result, { status: 'raw_mismatch', reason }, name);
+    }
+  });
+
+  test('returns the prefix match when the effective view is unchanged', () => {
+    const events = Array.from({ length: 6 }, (_, index) => textEvent(index));
+    const checkpoint = checkpointOver(events.slice(0, 4));
+
+    const result = checkHistoryCompactCheckpointCurrency(checkpoint, events, EMPTY_SNAPSHOT);
+
+    assert.equal(result.status, 'current');
+    if (result.status !== 'current') return;
+    assert.equal(result.match.coveredEventCount, 4);
+    assert.deepEqual(result.match.coveredRuntimeEvents, events.slice(0, 4));
+    assert.deepEqual(result.match.successorRuntimeEvents, events.slice(4));
+  });
+
+  test('judges the covered span against the supplied snapshot, not the latest ledger', () => {
+    const result = toolResultEvent('event-result', 'RAW_COVERED_BODY');
+    const covered = [textEvent(0), result];
+    const transition = archiveTransitionFor(result, 'EFFECTIVE_REPLACEMENT_BODY');
+    // The checkpoint was minted AFTER the transition: its pinned digest
+    // describes the folded view.
+    const checkpoint = checkpointOver(
+      covered,
+      reduceEffectiveModelProjections(covered, [transition]).events,
+    );
+
+    // A snapshot taken before the transition still sees the raw body: the
+    // checkpoint is stale against it, even though the newest ledger state
+    // would reproduce the pin. The function consults only what it is given.
+    assert.deepEqual(checkHistoryCompactCheckpointCurrency(checkpoint, covered, EMPTY_SNAPSHOT), {
+      status: 'effective_history_changed',
+    });
+    const currentSnapshot: LoadedModelProjectionTransitions = {
+      ...EMPTY_SNAPSHOT,
+      transitions: [transition],
+    };
+    assert.equal(
+      checkHistoryCompactCheckpointCurrency(checkpoint, covered, currentSnapshot).status,
+      'current',
+    );
+  });
+
+  test('reports effective_history_changed when a transition drifted the covered view', () => {
+    const result = toolResultEvent('event-result', 'RAW_COVERED_BODY');
+    const covered = [textEvent(0), result];
+    // Minted before the transition: the pin describes the un-folded view.
+    const checkpoint = checkpointOver(covered);
+    const snapshot: LoadedModelProjectionTransitions = {
+      ...EMPTY_SNAPSHOT,
+      transitions: [archiveTransitionFor(result, 'EFFECTIVE_REPLACEMENT_BODY')],
+    };
+
+    assert.deepEqual(checkHistoryCompactCheckpointCurrency(checkpoint, covered, snapshot), {
+      status: 'effective_history_changed',
+    });
+  });
+
+  test('reports effective_history_changed when no effective digest is pinned', () => {
+    const covered = [textEvent(0), textEvent(1)];
+    const checkpoint = checkpointOver(covered);
+    // A legacy record without the source block may carry no
+    // effectiveSourceDigest at all: raw identity still matches but there is
+    // nothing to judge content currency against.
+    const legacy = {
+      ...checkpoint,
+      source: undefined,
+      coverage: { ...checkpoint.coverage, effectiveSourceDigest: undefined },
+    } as HistoryCompactCheckpoint;
+
+    assert.equal(validateHistoryCompactCheckpointShape(legacy), true);
+    assert.deepEqual(checkHistoryCompactCheckpointCurrency(legacy, covered, EMPTY_SNAPSHOT), {
+      status: 'effective_history_changed',
+    });
+  });
+
+  test('reports effective_history_changed when too few covered effective events remain', () => {
+    // The covered span as recorded includes an event the compact projection
+    // does not count (model-hidden), so after selecting the covered effective
+    // prefix fewer than eventCount events remain.
+    const hidden = { ...textEvent(1), modelVisibility: 'hidden' as const };
+    const covered = [textEvent(0), hidden];
+    const checkpoint = checkpointOver(covered);
+
+    assert.equal(
+      checkHistoryCompactCheckpointCurrency(checkpoint, covered, EMPTY_SNAPSHOT).status,
+      'effective_history_changed',
+    );
+  });
+
+  test('reports effective_history_changed when the covered prefix does not reach the through event', () => {
+    // The checkpoint names the hidden tail as its through event; the effective
+    // prefix stops one content event earlier, so it never reaches it.
+    const hiddenTail = { ...textEvent(1), modelVisibility: 'hidden' as const };
+    const covered = [textEvent(0), hiddenTail];
+    const checkpoint = checkpointOver(covered);
+    assert.equal(
+      checkpoint.coverage.through.runtimeEventId,
+      hiddenTail.id,
+      'the raw match pins the hidden tail as through',
+    );
+
+    const currency = checkHistoryCompactCheckpointCurrency(checkpoint, covered, EMPTY_SNAPSHOT);
+    assert.equal(currency.status, 'effective_history_changed');
+  });
+
+  test('an unreadable transition target withholds the covered body from the digest', () => {
+    const result = toolResultEvent('event-result', 'RAW_COVERED_BODY');
+    const covered = [textEvent(0), result];
+    const checkpoint = checkpointOver(covered);
+    const withholding: LoadedModelProjectionTransitions = {
+      ...EMPTY_SNAPSHOT,
+      unreadableTargets: new Set<string>(['event-result::tool_result']),
+    };
+
+    // The pinned digest described the readable body; withheld content can no
+    // longer be judged current, and the raw body must not come back.
+    assert.equal(
+      checkHistoryCompactCheckpointCurrency(checkpoint, covered, withholding).status,
+      'effective_history_changed',
+    );
+
+    // A checkpoint minted over the withheld view does stay current under the
+    // same snapshot — the fold really applies the snapshot's unreadable set.
+    const withheldCheckpoint = checkpointOver(
+      covered,
+      reduceEffectiveModelProjections(covered, [], withholding.unreadableTargets).events,
+    );
+    assert.equal(
+      checkHistoryCompactCheckpointCurrency(withheldCheckpoint, covered, withholding).status,
+      'current',
+    );
+  });
+
+  function toolResultEvent(id: string, body: string): RuntimeEvent {
+    return {
+      ...textEvent(1),
+      id,
+      role: 'tool',
+      author: 'tool',
+      content: {
+        kind: 'function_response',
+        id: 'call-1',
+        name: 'Read',
+        result: { body },
+      },
+    };
+  }
+
+  function archiveTransitionFor(
+    event: RuntimeEvent,
+    replacementText: string,
+  ): ReturnType<typeof buildModelProjectionTransition> {
+    const content = event.content as Extract<
+      RuntimeEvent['content'],
+      { kind: 'function_response' }
+    >;
+    const sourceProjection = compatibilityToolResultProjection(content, event.sessionId);
+    assert.ok(sourceProjection);
+    const replacement: DurableToolResultProjection = {
+      version: 1,
+      kind: 'text',
+      text: replacementText,
+    };
+    return buildModelProjectionTransition({
+      sessionId: event.sessionId,
+      target: {
+        runtimeEventId: event.id,
+        part: 'tool_result',
+        toolCallId: content.id,
+        toolName: content.name,
+      },
+      sourceProjection,
+      replacement,
+      now: 1,
+    });
+  }
 });
 
 function textEvent(index: number): RuntimeEvent {

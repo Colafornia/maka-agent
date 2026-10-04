@@ -29,6 +29,37 @@ import {
 import { HistoryCompactSummarizerError } from '../history-compact-summarizer.js';
 import { testInvocationRecord } from './invocation-fixture.js';
 import { matchHistoryCompactCheckpointPrefix } from '../history-compact-checkpoint.js';
+import { buildModelProjectionTransition } from '@maka/core/model-projection-transition';
+import { compatibilityToolResultProjection } from '../durable-tool-result-projection.js';
+import type { LoadedModelProjectionTransitions } from '../model-projection-transition-ledger.js';
+
+/** The empty transition view: folding through it is the identity. */
+const EMPTY_PROJECTION_SNAPSHOT: LoadedModelProjectionTransitions = {
+  transitions: [],
+  unreadableTargets: new Set<string>(),
+  unscopedUnreadable: 0,
+};
+
+function archiveTransitionFor(
+  event: RuntimeEvent,
+  replacementText: string,
+): ReturnType<typeof buildModelProjectionTransition> {
+  const content = event.content as Extract<RuntimeEvent['content'], { kind: 'function_response' }>;
+  const sourceProjection = compatibilityToolResultProjection(content, event.sessionId);
+  assert.ok(sourceProjection);
+  return buildModelProjectionTransition({
+    sessionId: event.sessionId,
+    target: {
+      runtimeEventId: event.id,
+      part: 'tool_result',
+      toolCallId: content.id,
+      toolName: content.name,
+    },
+    sourceProjection,
+    replacement: { version: 1, kind: 'text', text: replacementText },
+    now: 1,
+  });
+}
 
 describe('safe compaction prefix selection', () => {
   test('folds the largest immutable non-partial prefix, leaving the reserved tail', () => {
@@ -609,10 +640,12 @@ describe('plan context compaction', () => {
       call('call-c', 'cc', 'turn-1'),
       result('res-c', 'cc', 'turn-1'),
     ];
-    const identityFold = async (covered: readonly RuntimeEvent[]) => [...covered];
     // Coverage ends at `res-a`: the first fold's covered span contains it.
     const first = await planHistoryCompaction(
-      planInput({ orderedEvents: events, projectEffectiveCoverage: identityFold }),
+      planInput({
+        orderedEvents: events,
+        loadProjectionSnapshot: async () => EMPTY_PROJECTION_SNAPSHOT,
+      }),
     );
     assert.equal(first.decision, 'compacted');
     if (first.decision !== 'compacted') return;
@@ -622,7 +655,7 @@ describe('plan context compaction', () => {
       planInput({
         orderedEvents: longerEvents,
         previousCheckpoint: first.checkpoint,
-        projectEffectiveCoverage: identityFold,
+        loadProjectionSnapshot: async () => EMPTY_PROJECTION_SNAPSHOT,
         summarize: ({ newlyFoldedRuntimeEvents, previousCheckpoint }) => {
           seenNewlyFolded = newlyFoldedRuntimeEvents.map((event) => event.id);
           assert.equal(previousCheckpoint?.checkpointId, first.checkpoint.checkpointId);
@@ -643,11 +676,13 @@ describe('plan context compaction', () => {
       call('call-c', 'cc', 'turn-1'),
       result('res-c', 'cc', 'turn-1'),
     ];
-    const identityFold = async (covered: readonly RuntimeEvent[]) => [...covered];
     // First fold: no transition exists, so the effective view IS the raw view
     // and the checkpoint (covering through `res-a`) pins that digest.
     const first = await planHistoryCompaction(
-      planInput({ orderedEvents: events, projectEffectiveCoverage: identityFold }),
+      planInput({
+        orderedEvents: events,
+        loadProjectionSnapshot: async () => EMPTY_PROJECTION_SNAPSHOT,
+      }),
     );
     assert.equal(first.decision, 'compacted');
     if (first.decision !== 'compacted') return;
@@ -656,25 +691,15 @@ describe('plan context compaction', () => {
     // first checkpoint's coverage — leaving the raw prefix untouched. The
     // inherited summary still quotes the raw body, but the view it describes
     // no longer exists.
-    const foldWithArchive = async (covered: readonly RuntimeEvent[]): Promise<RuntimeEvent[]> =>
-      covered.map((event) => {
-        if (event.id !== 'res-a') return event;
-        const content = event.content as Extract<
-          RuntimeEvent['content'],
-          { kind: 'function_response' }
-        >;
-        return {
-          ...event,
-          content: {
-            ...content,
-            modelProjection: {
-              version: 1 as const,
-              kind: 'text' as const,
-              text: '[archived: artifact-res-a]',
-            },
-          },
-        };
-      });
+    const archiveSnapshot: LoadedModelProjectionTransitions = {
+      ...EMPTY_PROJECTION_SNAPSHOT,
+      transitions: [
+        archiveTransitionFor(
+          events.find((event) => event.id === 'res-a')!,
+          '[archived: artifact-res-a]',
+        ),
+      ],
+    };
 
     let summarizeSawPrevious: string | undefined;
     let seenCovered: string[] = [];
@@ -683,7 +708,7 @@ describe('plan context compaction', () => {
       planInput({
         orderedEvents: longerEvents,
         previousCheckpoint: first.checkpoint,
-        projectEffectiveCoverage: foldWithArchive,
+        loadProjectionSnapshot: async () => archiveSnapshot,
         summarize: ({ coveredRuntimeEvents, newlyFoldedRuntimeEvents, previousCheckpoint }) => {
           summarizeSawPrevious = previousCheckpoint?.checkpointId;
           seenCovered = coveredRuntimeEvents.map((event) => event.id);
