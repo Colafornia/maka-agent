@@ -188,6 +188,7 @@ async function sessionRecoveryHarness(options: {
         calls.push(`relocate:${sessionId}:${projectId}`);
         return options.relocate ? options.relocate(sessionId, projectId) : { ok: true };
       },
+      relocateToDedicatedDirectory: async () => ({ ok: false, reason: 'session_busy' }),
     },
   });
   const confirm = async (input: { title: string; description?: string; confirmLabel?: string }) => {
@@ -1142,6 +1143,7 @@ describe('useTaskEntryController', () => {
       },
       sessions: {
         relocateWorkspace: async () => ({ ok: false, reason: 'session_busy' }),
+        relocateToDedicatedDirectory: async () => ({ ok: false, reason: 'session_busy' }),
       },
     });
 

@@ -237,7 +237,10 @@ describe('TaskEntryRoot render scope', () => {
           getCatalog: async () => localCatalog([project('project-a')]),
           addProject: async () => { calls.push('add'); return picked.promise; },
         },
-        sessions: { relocateWorkspace: async () => { calls.push('relocate'); return { ok: true }; } },
+        sessions: {
+          relocateWorkspace: async () => { calls.push('relocate'); return { ok: true }; },
+          relocateToDedicatedDirectory: async () => ({ ok: true }),
+        },
       });
       await act(async () => renderProvider(root, services, createElement(LocalRecoveryShellProbe)));
       await act(async () => latestTaskEntry?.commands.openSessionWorkspaceRecovery('session-1'));
@@ -271,7 +274,10 @@ describe('TaskEntryRoot render scope', () => {
     const calls: string[] = [];
     const services = createFakeTaskEntryServices({
       catalog: { ...createFakeTaskEntryServices().catalog, getCatalog: async () => localCatalog([project('project-a')]) },
-      sessions: { relocateWorkspace: async (sessionId) => { calls.push(sessionId); return moved.promise; } },
+      sessions: {
+        relocateWorkspace: async (sessionId) => { calls.push(sessionId); return moved.promise; },
+        relocateToDedicatedDirectory: async () => ({ ok: true }),
+      },
     });
     await act(async () => renderProvider(root, services, createElement(LocalRecoveryShellProbe)));
     await act(async () => latestTaskEntry?.commands.openSessionWorkspaceRecovery('session-1'));
@@ -377,6 +383,7 @@ describe('TaskEntryRoot render scope', () => {
           recoverySelectedProject = projectId;
           return { ok: true };
         },
+        relocateToDedicatedDirectory: async () => ({ ok: true }),
       },
     });
 
@@ -446,6 +453,7 @@ describe('TaskEntryRoot render scope', () => {
           calls.push(`relocate:${sessionId}:${projectId}`);
           return { ok: true };
         },
+        relocateToDedicatedDirectory: async () => ({ ok: true }),
       },
     });
 

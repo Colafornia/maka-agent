@@ -112,6 +112,15 @@ export interface TaskEntryControllerCommands {
   openSessionWorkspaceRecovery(sessionId: string): void;
   closeSessionWorkspaceRecovery(expected?: SessionWorkspaceRecoveryRequest): void;
   relocateSessionWorkspace(input: RelocateSessionWorkspaceInput): Promise<boolean>;
+  /**
+   * The explicit per-task correction for an unsafe inherited directory:
+   * rebinds the Session to a fresh dedicated task directory. Resolves to the
+   * outcome — `undefined` means refused (already reported), an object carries
+   * the directory it landed on when the Host named it.
+   */
+  moveSessionToDedicatedDirectory(
+    sessionId: string,
+  ): Promise<{ readonly directory?: string } | undefined>;
   addSessionWorkspace(input: AddSessionWorkspaceInput): Promise<boolean>;
   resolveWorkBoardTarget(item: WorkBoardItem): WorkBoardStartTargetResult;
   prepareWorkBoardDraft(target: TaskEntryTarget, draft: string): string | undefined;
@@ -175,9 +184,10 @@ export function useTaskEntryController(
   const toast = useToast();
   const copy = getShellCopy(locale).projectActions;
   const conversationCopy = getConversationCopy(locale).workspace;
+  const sessionMoveCopy = getShellCopy(locale).sessionRowActions;
   const reportError = input.reportError;
   const manageProjects = input.manageProjects;
-  const { catalog: service, folders } = useTaskEntryServices();
+  const { catalog: service, sessions, folders } = useTaskEntryServices();
   const [catalog, setCatalog] = useState<TaskEntryCatalog>(EMPTY_CATALOG);
   const [selectedProfileId, setSelectedProfileId] = useState<string>();
   const [projectSelections, setProjectSelections] = useState(
@@ -336,6 +346,43 @@ export function useTaskEntryController(
     reportError,
     confirm: input.confirm,
   });
+
+  const moveSessionToDedicatedDirectory = useCallback(async (
+    sessionId: string,
+  ): Promise<{ readonly directory?: string } | undefined> => {
+    try {
+      const result = await sessions.relocateToDedicatedDirectory(sessionId);
+      if (!result.ok) {
+        reportError({
+          title: sessionMoveCopy.moveFailedTitle,
+          description: sessionMoveCopy.moveFailures[result.reason],
+          sessionId,
+        });
+        return undefined;
+      }
+      closeSessionWorkspaceRecovery();
+      return result.directory === undefined ? {} : { directory: result.directory };
+    } catch (cause) {
+      reportError({
+        title: copy.projectUpdateFailedTitle,
+        description: localizedShellErrorMessage(
+          cause,
+          copy.projectUpdateFailedFallback,
+          locale,
+        ),
+        sessionId,
+      });
+      return undefined;
+    }
+  }, [
+    closeSessionWorkspaceRecovery,
+    copy.projectUpdateFailedFallback,
+    copy.projectUpdateFailedTitle,
+    locale,
+    reportError,
+    sessionMoveCopy,
+    sessions,
+  ]);
 
   const addProjectForHost = useCallback(async (host: ReadyTaskEntryHost, name?: string): Promise<void> => {
     if (projectMutationPendingRef.current) return;
@@ -751,6 +798,7 @@ export function useTaskEntryController(
       openSessionWorkspaceRecovery,
       closeSessionWorkspaceRecovery,
       relocateSessionWorkspace,
+      moveSessionToDedicatedDirectory,
       addSessionWorkspace,
       resolveWorkBoardTarget,
       prepareWorkBoardDraft,
@@ -803,6 +851,7 @@ export function useTaskEntryController(
     service,
     resolveWorkBoardTarget,
     relocateSessionWorkspace,
+    moveSessionToDedicatedDirectory,
     prepareWorkBoardDraft,
     selectedHost,
     selectedHostProjection,

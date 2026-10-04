@@ -23,6 +23,7 @@ import type { RuntimeHostProfileKind } from '@maka/runtime-host/profile-kind';
 import type {
   DesktopProjectCapabilities,
   DesktopRuntimeHostRef,
+  TaskDirectoryBinding,
 } from '../preload/bridge-contract.js';
 import {
   runIfDefaultRuntimeHostCurrent,
@@ -35,6 +36,8 @@ interface RendererAppInfo {
   projectId?: string | null;
   projectPath: string;
   projectGit: { isGitRepo: boolean; branch?: string };
+  /** How a projectless Session's bound directory is classified; absent when unclassified. */
+  taskDirectory?: TaskDirectoryBinding;
 }
 
 interface SessionProjectInfoState extends RendererAppInfo {
