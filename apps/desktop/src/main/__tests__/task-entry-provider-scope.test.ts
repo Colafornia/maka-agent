@@ -233,13 +233,11 @@ describe('TaskEntryRoot render scope', () => {
       const calls: string[] = [];
       const services = createFakeTaskEntryServices({
         catalog: {
-          ...createFakeTaskEntryServices().catalog,
           getCatalog: async () => localCatalog([project('project-a')]),
           addProject: async () => { calls.push('add'); return picked.promise; },
         },
         sessions: {
           relocateWorkspace: async () => { calls.push('relocate'); return { ok: true }; },
-          relocateToDedicatedDirectory: async () => ({ ok: true }),
         },
       });
       await act(async () => renderProvider(root, services, createElement(LocalRecoveryShellProbe)));
@@ -273,10 +271,9 @@ describe('TaskEntryRoot render scope', () => {
     const moved = deferred<Awaited<ReturnType<TaskEntryServices['sessions']['relocateWorkspace']>>>();
     const calls: string[] = [];
     const services = createFakeTaskEntryServices({
-      catalog: { ...createFakeTaskEntryServices().catalog, getCatalog: async () => localCatalog([project('project-a')]) },
+      catalog: { getCatalog: async () => localCatalog([project('project-a')]) },
       sessions: {
         relocateWorkspace: async (sessionId) => { calls.push(sessionId); return moved.promise; },
-        relocateToDedicatedDirectory: async () => ({ ok: true }),
       },
     });
     await act(async () => renderProvider(root, services, createElement(LocalRecoveryShellProbe)));
@@ -295,7 +292,6 @@ describe('TaskEntryRoot render scope', () => {
     const { root } = installReactRenderer();
     const services = createFakeTaskEntryServices({
       catalog: {
-        ...createFakeTaskEntryServices().catalog,
         getCatalog: async () => catalog(),
       },
     });
@@ -328,7 +324,6 @@ describe('TaskEntryRoot render scope', () => {
     };
     const services = createFakeTaskEntryServices({
       catalog: {
-        ...createFakeTaskEntryServices().catalog,
         getCatalog: async () => ({ defaultProfileId: 'remote', hosts: [host] }),
         addProject: async (_host, name) => {
           names.push(name);
@@ -354,7 +349,6 @@ describe('TaskEntryRoot render scope', () => {
     const { root } = installReactRenderer();
     const services = createFakeTaskEntryServices({
       catalog: {
-        ...createFakeTaskEntryServices().catalog,
         getCatalog: async () => catalog(),
       },
     });
@@ -375,7 +369,6 @@ describe('TaskEntryRoot render scope', () => {
     const { root } = installReactRenderer();
     const services = createFakeTaskEntryServices({
       catalog: {
-        ...createFakeTaskEntryServices().catalog,
         getCatalog: async () => catalog(),
       },
       sessions: {
@@ -383,7 +376,6 @@ describe('TaskEntryRoot render scope', () => {
           recoverySelectedProject = projectId;
           return { ok: true };
         },
-        relocateToDedicatedDirectory: async () => ({ ok: true }),
       },
     });
 
@@ -438,7 +430,6 @@ describe('TaskEntryRoot render scope', () => {
     let reads = 0;
     const services = createFakeTaskEntryServices({
       catalog: {
-        ...createFakeTaskEntryServices().catalog,
         getCatalog: async () => {
           reads += 1;
           return reads === 1 ? localCatalog() : localCatalog([project('project-new')]);
@@ -453,7 +444,6 @@ describe('TaskEntryRoot render scope', () => {
           calls.push(`relocate:${sessionId}:${projectId}`);
           return { ok: true };
         },
-        relocateToDedicatedDirectory: async () => ({ ok: true }),
       },
     });
 

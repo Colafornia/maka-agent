@@ -189,7 +189,10 @@ export function registerAppIpc(
     return {
       projectPath,
       projectGit: await resolveProjectGitInfo(projectPath),
-      taskDirectory: await deps.getSessionTaskDirectoryBinding?.(sessionId),
+      // An optional classification: its failure must not take down the
+      // project and Git info this read exists to return.
+      taskDirectory: await deps.getSessionTaskDirectoryBinding?.(sessionId)
+        .catch(() => undefined),
     };
   });
   targetIpc.handle('app:openPath', async (_event, key: string, sessionId: unknown): Promise<OpenPathResult> => {

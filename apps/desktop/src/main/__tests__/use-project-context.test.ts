@@ -136,7 +136,7 @@ async function importProjectContext(): Promise<typeof ProjectContext> {
     platform: 'node',
     format: 'esm',
     target: 'node20',
-    external: ['react'],
+    packages: 'external',
     logLevel: 'silent',
   });
   return (await import(`${pathToFileURL(outfile).href}?t=${Date.now()}`)) as typeof ProjectContext;

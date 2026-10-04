@@ -143,6 +143,7 @@ import {
   defaultRuntimeHostRecoveryDialog,
 } from "./native-diagnostic-dialog.js";
 import {
+  projectlessTaskWorkspace,
   resolveDesktopSessionWorkspace,
 } from "./new-session-project.js";
 import { createMcpExclusiveLane, registerMcpIpcMain } from "./mcp-ipc-main.js";
@@ -447,11 +448,15 @@ const attachmentApprovals = createAttachmentApprovalRegistry();
 /**
  * Dedicated task directories live in the user-owned `~/Maka/tasks` root —
  * deliberately separate from `userData` (settings, credentials, session
- * state) and from the install location. Isolated e2e profiles redirect both
- * `userData` and the fake home into one sandbox, so the root moves under
- * the isolated workspace instead — `~` there resolves inside `userData`
- * itself and would trip the reserved-location guard; inside the sandbox the
- * Client-data reserved roots no longer apply.
+ * state) and from the install location. Source launches are `Maka Dev`, so
+ * development tasks land in `~/Maka Dev/tasks`; `getAppPath()` staying in
+ * `reservedRoots` also means a projectless cwd inside the source tree reads
+ * as `suspicious`, which is intended — the app must not nest task state in
+ * its own checkout. Isolated e2e profiles redirect both `userData` and the
+ * fake home into one sandbox, so the root moves under the isolated
+ * workspace instead — `~` there resolves inside `userData` itself and would
+ * trip the reserved-location guard; inside the sandbox the Client-data
+ * reserved roots no longer apply.
  */
 const managedTaskDirectories = createManagedTaskDirectoryAuthority({
   root:
@@ -460,8 +465,8 @@ const managedTaskDirectories = createManagedTaskDirectoryAuthority({
       : join(app.getPath('home'), app.getName(), 'tasks'),
   reservedRoots:
     e2eFixture || hasIsolatedE2eProfile
-      ? () => [app.getAppPath()]
-      : () => [userDataDir, workspaceRoot, app.getAppPath()],
+      ? [app.getAppPath()]
+      : [userDataDir, workspaceRoot, app.getAppPath()],
 });
 const sessionLocalStore = new DesktopSessionLocalStore(join(userDataDir, 'session-experience.sqlite'));
 const localSessionChanged = createSessionLocalChangedEmitter({
@@ -754,18 +759,11 @@ const selectedDesktopWorkspaceTarget = async (
 const currentDesktopWorkspaceTarget = async (
   target: DesktopRuntimeHostTargetPolicy,
 ): Promise<WorkspaceTarget> => {
-  const currentTarget = requireRuntimePolicyTarget(target);
-  const current = await currentTarget.projectManagement.current();
-  if (typeof current.projectId === "string") {
-    return { kind: "project", projectId: current.projectId };
-  }
-  if (runtimeHostProfileUsesHostWorkspace(target.kind)) {
+  const workspace = await selectedDesktopWorkspaceTarget(target);
+  if (!workspace) {
     throw new Error("Select a project from the Runtime Host first");
   }
-  if (current.pathSource === "configured") {
-    return { kind: "host_path", path: current.path };
-  }
-  return { kind: "host_path", path: await managedTaskDirectories.allocate() };
+  return projectlessTaskWorkspace(workspace, () => managedTaskDirectories.allocate());
 };
 const requireWorkHubTarget = (scope: DesktopTargetScope): DesktopRuntimeHostTargetContext => {
   const target = runtimePolicyTargetsByEpoch.get(scope.targetEpoch);
@@ -1746,14 +1744,17 @@ function registerHostClientIpc(
       if (typeof projectId === "string") {
         return { kind: "project", projectId };
       }
+      // A projectless new task runs in a fresh dedicated directory under the
+      // managed root, not the implicit fallback the selection carries.
+      // Preview its skills against that root — never allocate on a read.
       if (projectId === null) {
         if (usesHostWorkspace) return undefined;
-        return {
-          kind: "host_path",
-          path: (await requireRuntimePolicyTarget(target).projectManagement.current()).path,
-        };
+        return { kind: "host_path", path: await managedTaskDirectories.prepareRoot() };
       }
-      return selectedDesktopWorkspaceTarget(target);
+      const workspace = await selectedDesktopWorkspaceTarget(target);
+      return workspace?.kind === 'host_path'
+        ? { kind: 'host_path', path: await managedTaskDirectories.prepareRoot() }
+        : workspace;
     },
     getDefaultPermissionMode: () =>
       resolveDefaultPermissionMode(() => runtimeHostSettings.get()),

@@ -20,7 +20,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectRecord } from '@maka/core/project';
 import type { RuntimeHostProfileKind } from '@maka/runtime-host/profile-kind';
-import type { TitlebarProject, ToastApi } from '@maka/ui';
+import {
+  deriveTitlebarProjectName,
+  type TitlebarProject,
+  type ToastApi,
+} from '@maka/ui';
 import type {
   DesktopProjectCapabilities,
   DesktopRuntimeHostRef,
@@ -87,9 +91,7 @@ export function useAppShellProjectContext(options: {
     sharedSessionActive: boolean;
     activeSession: DesktopSessionSummary | undefined;
     sharedSessionDialog: SessionCollaborationDialogProjection;
-    moveToDedicatedDirectory(
-      sessionId: string,
-    ): Promise<{ readonly directory?: string } | undefined>;
+    moveToDedicatedDirectory(sessionId: string): Promise<string | undefined>;
     openProjectFolder(): void;
     copy: ShellAppCopy;
     toastApi: ToastApi;
@@ -264,14 +266,13 @@ export function useAppShellProjectContext(options: {
   } = titlebar;
   // The titlebar names the directory the ACTIVE session runs in, so it reads
   // the same projected project state the picker does — `projectInfo` already
-  // resolves to the session's own cwd once a session owns it. Mirrors
-  // @maka/ui's deriveTitlebarProjectName: importing it would add a value
-  // dependency edge the renderer architecture budget forbids here.
+  // resolves to the session's own cwd once a session owns it.
   const titlebarProjectName = sharedSessionActive
     ? undefined
-    : currentProject?.name ||
-      projectInfo?.projectPath.replace(/[/\\]+$/, '').split(/[/\\]/).pop() ||
-      undefined;
+    : deriveTitlebarProjectName({
+        projectName: currentProject?.name,
+        projectPath: projectInfo?.projectPath,
+      });
   /**
    * The explicit per-task correction: rebinds the Session to a fresh
    * dedicated task directory through the Runtime Host's relocation
@@ -281,11 +282,11 @@ export function useAppShellProjectContext(options: {
   const moveSessionToDedicatedDirectory = useCallback(async () => {
     if (!sessionId) return;
     // Task Entry reports refusals and failures itself; only success lands here.
-    const result = await moveToDedicatedDirectory(sessionId);
-    if (!result) return;
+    const directory = await moveToDedicatedDirectory(sessionId);
+    if (directory === undefined) return;
     toastApi.toast({
       title: copy.taskDirectoryMovedTitle,
-      ...(result.directory ? { description: copy.taskDirectoryMovedDescription(result.directory) } : {}),
+      description: copy.taskDirectoryMovedDescription(directory),
     });
   }, [sessionId, moveToDedicatedDirectory, copy, toastApi]);
   const taskDirectory = projectInfo?.taskDirectory;

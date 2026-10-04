@@ -359,19 +359,13 @@ export type DesktopSessionStopResult =
  * How a projectless Session's bound directory relates to the Client's
  * dedicated task-directory root:
  * - `managed`: inside the dedicated root — the policy's steady state.
- * - `suspicious`: `reserved` or `symlink_redirect` — a binding that cannot be
- *   a deliberate user choice and warrants a repair offer.
+ * - `suspicious`: a binding that cannot be a deliberate user choice — the
+ *   filesystem root, or inside a reserved location (application state,
+ *   install files) — and warrants a repair offer.
  * - `other`: a real path outside the root — possibly intentional, possibly
  *   inherited; correctable but not flagged.
  */
 export type TaskDirectoryBinding = 'managed' | 'suspicious' | 'other';
-
-/**
- * `moveToDedicatedDirectory` reports the directory the Session was bound to
- * alongside the standard update result.
- */
-export type DesktopSessionDedicatedDirectoryResult =
-  DesktopSessionUpdateResult<DesktopSessionSummary> & { readonly directory?: string };
 
 /** Cancellation proof aggregated across every Runtime Host query batch. */
 export interface DesktopMessageCancellationQueryResult {
@@ -1394,9 +1388,10 @@ export interface MakaBridge {
      * Explicit per-task correction: rebinds this Session's workspace to a
      * fresh dedicated task directory. Preserves every relocation safeguard of
      * `moveToProject` (busy/archived/CAS); refuses on Hosts that cannot
-     * provision Client directories.
+     * provision Client directories. The landed directory is the returned
+     * Session's `cwd`.
      */
-    moveToDedicatedDirectory(sessionId: string): Promise<DesktopSessionDedicatedDirectoryResult>;
+    moveToDedicatedDirectory(sessionId: string): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>>;
     setPermissionMode(sessionId: string, mode: PermissionMode): Promise<DesktopSessionUpdateResult<DesktopSessionSummary>>;
     /**
      * Enter or leave Plan — a temporary collaboration excursion Runtime ends
