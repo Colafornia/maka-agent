@@ -342,11 +342,6 @@ export async function planHistoryCompaction(
 
     // Roll forward from a previous checkpoint when it is an exact prefix of the
     // covered events, so the summary only re-reads the newly folded span.
-    const checkpointMatch = input.previousCheckpoint
-      ? matchHistoryCompactCheckpointPrefix(input.previousCheckpoint, coveredRuntimeEvents)
-      : undefined;
-    let previousCheckpoint =
-      checkpointMatch && !checkpointMatch.reason ? input.previousCheckpoint : undefined;
     // Content-currency gate for roll-forward: the inherited summary or
     // provider state describes the EFFECTIVE view of the previous coverage at
     // its own creation. A projection transition committed since rewrites that
@@ -354,19 +349,28 @@ export async function planHistoryCompaction(
     // would launder it into the new checkpoint under the current effective
     // digest — later replay guards would then pass it (#4845 review). On
     // drift, discard the checkpoint and re-summarize the whole effective span.
+    let previousCheckpoint = input.previousCheckpoint;
+    let successorRuntimeEvents: readonly RuntimeEvent[] | undefined;
     if (previousCheckpoint && projectionSnapshot) {
       const currency = checkHistoryCompactCheckpointCurrency(
         previousCheckpoint,
         coveredRuntimeEvents,
         projectionSnapshot,
       );
-      if (currency.status !== 'current') {
+      if (currency.status === 'current') {
+        successorRuntimeEvents = currency.match.successorRuntimeEvents;
+      } else {
+        previousCheckpoint = undefined;
+      }
+    } else if (previousCheckpoint) {
+      const match = matchHistoryCompactCheckpointPrefix(previousCheckpoint, coveredRuntimeEvents);
+      if (match.reason === undefined) {
+        successorRuntimeEvents = match.successorRuntimeEvents;
+      } else {
         previousCheckpoint = undefined;
       }
     }
-    const newlyFoldedRuntimeEvents = previousCheckpoint
-      ? checkpointMatch!.successorRuntimeEvents
-      : coveredRuntimeEvents;
+    const newlyFoldedRuntimeEvents = successorRuntimeEvents ?? coveredRuntimeEvents;
 
     // The model-visible summary reads the effective (transition-folded) view
     // of the covered span; the raw events keep the coverage identity.
@@ -562,7 +566,3 @@ export function applyRuntimeEventHistoryCompact(
     }),
   };
 }
-
-// Re-exported so existing consumers keep one import surface; the predicate
-// lives beside the checkpoint currency decision that now also needs it (#5930).
-export { isHistoryCompactContentEvent } from './history-compact-checkpoint.js';

@@ -35,9 +35,6 @@ import {
   validateHistoryCompactCheckpointShape,
   type HistoryCompactCheckpoint,
 } from '../history-compact-checkpoint.js';
-import { buildModelProjectionTransition } from '@maka/core/model-projection-transition';
-import type { DurableToolResultProjection } from '@maka/core/durable-tool-result-projection';
-import { compatibilityToolResultProjection } from '../durable-tool-result-projection.js';
 import {
   reduceEffectiveModelProjections,
   type LoadedModelProjectionTransitions,
@@ -48,7 +45,11 @@ import {
 } from '../history-compact-ledger.js';
 import { estimateRuntimeEventsTokens } from '../context-budget.js';
 import { applyRuntimeEventHistoryCompact } from '../history-compaction.js';
-import { sectionedSummary } from './history-compact-test-fixtures.js';
+import {
+  archiveTransitionFor,
+  EMPTY_PROJECTION_SNAPSHOT,
+  sectionedSummary,
+} from './history-compact-test-fixtures.js';
 
 // Satisfies the sectioned summary contract for marked-checkpoint fixtures.
 const STRUCTURED_SUMMARY = [
@@ -1005,12 +1006,6 @@ describe('history compact checkpoint', () => {
  * must be able to disagree.
  */
 describe('checkHistoryCompactCheckpointCurrency', () => {
-  const EMPTY_SNAPSHOT: LoadedModelProjectionTransitions = {
-    transitions: [],
-    unreadableTargets: new Set<string>(),
-    unscopedUnreadable: 0,
-  };
-
   function checkpointOver(
     covered: readonly RuntimeEvent[],
     effectiveCovered?: readonly RuntimeEvent[],
@@ -1040,7 +1035,11 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
         'source_hash_mismatch',
       ],
     ] as const) {
-      const result = checkHistoryCompactCheckpointCurrency(checkpoint, events, EMPTY_SNAPSHOT);
+      const result = checkHistoryCompactCheckpointCurrency(
+        checkpoint,
+        events,
+        EMPTY_PROJECTION_SNAPSHOT,
+      );
       assert.deepEqual(result, { status: 'raw_mismatch', reason }, name);
     }
   });
@@ -1049,7 +1048,11 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
     const events = Array.from({ length: 6 }, (_, index) => textEvent(index));
     const checkpoint = checkpointOver(events.slice(0, 4));
 
-    const result = checkHistoryCompactCheckpointCurrency(checkpoint, events, EMPTY_SNAPSHOT);
+    const result = checkHistoryCompactCheckpointCurrency(
+      checkpoint,
+      events,
+      EMPTY_PROJECTION_SNAPSHOT,
+    );
 
     assert.equal(result.status, 'current');
     if (result.status !== 'current') return;
@@ -1072,11 +1075,14 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
     // A snapshot taken before the transition still sees the raw body: the
     // checkpoint is stale against it, even though the newest ledger state
     // would reproduce the pin. The function consults only what it is given.
-    assert.deepEqual(checkHistoryCompactCheckpointCurrency(checkpoint, covered, EMPTY_SNAPSHOT), {
-      status: 'effective_history_changed',
-    });
+    assert.deepEqual(
+      checkHistoryCompactCheckpointCurrency(checkpoint, covered, EMPTY_PROJECTION_SNAPSHOT),
+      {
+        status: 'effective_history_changed',
+      },
+    );
     const currentSnapshot: LoadedModelProjectionTransitions = {
-      ...EMPTY_SNAPSHOT,
+      ...EMPTY_PROJECTION_SNAPSHOT,
       transitions: [transition],
     };
     assert.equal(
@@ -1091,7 +1097,7 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
     // Minted before the transition: the pin describes the un-folded view.
     const checkpoint = checkpointOver(covered);
     const snapshot: LoadedModelProjectionTransitions = {
-      ...EMPTY_SNAPSHOT,
+      ...EMPTY_PROJECTION_SNAPSHOT,
       transitions: [archiveTransitionFor(result, 'EFFECTIVE_REPLACEMENT_BODY')],
     };
 
@@ -1113,28 +1119,19 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
     } as HistoryCompactCheckpoint;
 
     assert.equal(validateHistoryCompactCheckpointShape(legacy), true);
-    assert.deepEqual(checkHistoryCompactCheckpointCurrency(legacy, covered, EMPTY_SNAPSHOT), {
-      status: 'effective_history_changed',
-    });
-  });
-
-  test('reports effective_history_changed when too few covered effective events remain', () => {
-    // The covered span as recorded includes an event the compact projection
-    // does not count (model-hidden), so after selecting the covered effective
-    // prefix fewer than eventCount events remain.
-    const hidden = { ...textEvent(1), modelVisibility: 'hidden' as const };
-    const covered = [textEvent(0), hidden];
-    const checkpoint = checkpointOver(covered);
-
-    assert.equal(
-      checkHistoryCompactCheckpointCurrency(checkpoint, covered, EMPTY_SNAPSHOT).status,
-      'effective_history_changed',
+    assert.deepEqual(
+      checkHistoryCompactCheckpointCurrency(legacy, covered, EMPTY_PROJECTION_SNAPSHOT),
+      {
+        status: 'effective_history_changed',
+      },
     );
   });
 
-  test('reports effective_history_changed when the covered prefix does not reach the through event', () => {
-    // The checkpoint names the hidden tail as its through event; the effective
-    // prefix stops one content event earlier, so it never reaches it.
+  test('reports effective_history_changed when a covered event is hidden from the projection', () => {
+    // The covered span as recorded includes an event the compact projection
+    // does not count (model-hidden): after selecting the covered effective
+    // prefix fewer than eventCount events remain, and the prefix never
+    // reaches the hidden tail the raw match pins as its through event.
     const hiddenTail = { ...textEvent(1), modelVisibility: 'hidden' as const };
     const covered = [textEvent(0), hiddenTail];
     const checkpoint = checkpointOver(covered);
@@ -1144,7 +1141,11 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
       'the raw match pins the hidden tail as through',
     );
 
-    const currency = checkHistoryCompactCheckpointCurrency(checkpoint, covered, EMPTY_SNAPSHOT);
+    const currency = checkHistoryCompactCheckpointCurrency(
+      checkpoint,
+      covered,
+      EMPTY_PROJECTION_SNAPSHOT,
+    );
     assert.equal(currency.status, 'effective_history_changed');
   });
 
@@ -1153,7 +1154,7 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
     const covered = [textEvent(0), result];
     const checkpoint = checkpointOver(covered);
     const withholding: LoadedModelProjectionTransitions = {
-      ...EMPTY_SNAPSHOT,
+      ...EMPTY_PROJECTION_SNAPSHOT,
       unreadableTargets: new Set<string>(['event-result::tool_result']),
     };
 
@@ -1189,35 +1190,6 @@ describe('checkHistoryCompactCheckpointCurrency', () => {
         result: { body },
       },
     };
-  }
-
-  function archiveTransitionFor(
-    event: RuntimeEvent,
-    replacementText: string,
-  ): ReturnType<typeof buildModelProjectionTransition> {
-    const content = event.content as Extract<
-      RuntimeEvent['content'],
-      { kind: 'function_response' }
-    >;
-    const sourceProjection = compatibilityToolResultProjection(content, event.sessionId);
-    assert.ok(sourceProjection);
-    const replacement: DurableToolResultProjection = {
-      version: 1,
-      kind: 'text',
-      text: replacementText,
-    };
-    return buildModelProjectionTransition({
-      sessionId: event.sessionId,
-      target: {
-        runtimeEventId: event.id,
-        part: 'tool_result',
-        toolCallId: content.id,
-        toolName: content.name,
-      },
-      sourceProjection,
-      replacement,
-      now: 1,
-    });
   }
 });
 

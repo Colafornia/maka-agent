@@ -44,11 +44,10 @@ import { canonicalToolArgsHash } from '@maka/core/tool-args-identity';
 import {
   buildHistoryCompactCheckpoint,
   checkHistoryCompactCheckpointCurrency,
-  matchHistoryCompactCheckpointPrefix,
+  isHistoryCompactContentEvent,
   validateHistoryCompactCheckpointShape,
 } from './history-compact-checkpoint.js';
 import { findCheckpointSummaryDefect } from './history-compact-summary-validation.js';
-import { isHistoryCompactContentEvent } from './history-compaction.js';
 import {
   classifyTerminalRuntimeLedger,
   commitTerminalRunWithRuntimeFact,
@@ -1141,9 +1140,9 @@ function cloneAgentRunEvent(
     // under an older policy would otherwise be permanently uncopyable.
     if (!validateHistoryCompactCheckpointShape(sourceCheckpoint, event.sessionId)) return null;
     if (sourceCheckpoint.version === 3) return null;
-    const match = matchHistoryCompactCheckpointPrefix(sourceCheckpoint, sourceCompactableEvents);
-    if (match.reason) return null;
-    // Rebinding a digest must not make an already stale source summary valid.
+    // Rebinding a digest must not make an already stale source summary valid:
+    // the currency check covers the raw prefix match too, so a prefix that no
+    // longer matches is dropped here as well.
     const currency = checkHistoryCompactCheckpointCurrency(
       sourceCheckpoint,
       sourceCompactableEvents,
@@ -1164,7 +1163,7 @@ function cloneAgentRunEvent(
     if (findCheckpointSummaryDefect(sourceCheckpoint.summary) !== undefined) {
       throw new Error(`Cannot copy invalid history compact checkpoint ${event.id}`);
     }
-    const coveredRuntimeEvents = match.coveredRuntimeEvents.map((sourceEvent) => {
+    const coveredRuntimeEvents = currency.match.coveredRuntimeEvents.map((sourceEvent) => {
       const cloned = clonedRuntimeEvents.get(sourceEvent.id);
       if (!cloned) {
         throw new Error(

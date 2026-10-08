@@ -29,37 +29,11 @@ import {
 import { HistoryCompactSummarizerError } from '../history-compact-summarizer.js';
 import { testInvocationRecord } from './invocation-fixture.js';
 import { matchHistoryCompactCheckpointPrefix } from '../history-compact-checkpoint.js';
-import { buildModelProjectionTransition } from '@maka/core/model-projection-transition';
-import { compatibilityToolResultProjection } from '../durable-tool-result-projection.js';
+import {
+  archiveTransitionFor,
+  EMPTY_PROJECTION_SNAPSHOT,
+} from './history-compact-test-fixtures.js';
 import type { LoadedModelProjectionTransitions } from '../model-projection-transition-ledger.js';
-
-/** The empty transition view: folding through it is the identity. */
-const EMPTY_PROJECTION_SNAPSHOT: LoadedModelProjectionTransitions = {
-  transitions: [],
-  unreadableTargets: new Set<string>(),
-  unscopedUnreadable: 0,
-};
-
-function archiveTransitionFor(
-  event: RuntimeEvent,
-  replacementText: string,
-): ReturnType<typeof buildModelProjectionTransition> {
-  const content = event.content as Extract<RuntimeEvent['content'], { kind: 'function_response' }>;
-  const sourceProjection = compatibilityToolResultProjection(content, event.sessionId);
-  assert.ok(sourceProjection);
-  return buildModelProjectionTransition({
-    sessionId: event.sessionId,
-    target: {
-      runtimeEventId: event.id,
-      part: 'tool_result',
-      toolCallId: content.id,
-      toolName: content.name,
-    },
-    sourceProjection,
-    replacement: { version: 1, kind: 'text', text: replacementText },
-    now: 1,
-  });
-}
 
 describe('safe compaction prefix selection', () => {
   test('folds the largest immutable non-partial prefix, leaving the reserved tail', () => {

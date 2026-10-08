@@ -41,8 +41,10 @@ import type {
   HistoryCompactCheckpoint,
   HistoryCompactProviderState,
 } from '../history-compact-checkpoint.js';
-import { buildModelProjectionTransition } from '@maka/core/model-projection-transition';
-import { compatibilityToolResultProjection } from '../durable-tool-result-projection.js';
+import {
+  archiveTransitionFor,
+  EMPTY_PROJECTION_SNAPSHOT,
+} from './history-compact-test-fixtures.js';
 import type { LoadedModelProjectionTransitions } from '../model-projection-transition-ledger.js';
 import type { ContextBudgetDiagnostic } from '@maka/core/usage-stats/types';
 import { HistoryCompactSummarizerError } from '../history-compact-error.js';
@@ -1225,42 +1227,14 @@ function defineMidTurnSuite(consumer: ConsumerMode): void {
         // the fold whose digest it invalidates.
         const checkpoint = fixture.recorded[0];
         if (!checkpoint) {
-          return {
-            transitions: [],
-            unreadableTargets: new Set<string>(),
-            unscopedUnreadable: 0,
-          };
+          return EMPTY_PROJECTION_SNAPSHOT;
         }
         coveredResult ??= fixture.ledger.find(
           (event) => event.content?.kind === 'function_response',
         );
-        const content = coveredResult!.content as Extract<
-          RuntimeEvent['content'],
-          { kind: 'function_response' }
-        >;
-        const sourceProjection = compatibilityToolResultProjection(content, 'session-1');
-        assert.ok(sourceProjection);
         return {
-          transitions: [
-            buildModelProjectionTransition({
-              sessionId: 'session-1',
-              target: {
-                runtimeEventId: coveredResult!.id,
-                part: 'tool_result',
-                toolCallId: content.id,
-                toolName: content.name,
-              },
-              sourceProjection,
-              replacement: {
-                version: 1,
-                kind: 'text',
-                text: 'POST_FOLD_TRANSITIONED_RESULT',
-              },
-              now: 1,
-            }),
-          ],
-          unreadableTargets: new Set<string>(),
-          unscopedUnreadable: 0,
+          ...EMPTY_PROJECTION_SNAPSHOT,
+          transitions: [archiveTransitionFor(coveredResult!, 'POST_FOLD_TRANSITIONED_RESULT')],
         };
       },
     });
