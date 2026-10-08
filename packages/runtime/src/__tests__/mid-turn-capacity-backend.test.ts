@@ -41,6 +41,11 @@ import type {
   HistoryCompactCheckpoint,
   HistoryCompactProviderState,
 } from '../history-compact-checkpoint.js';
+import {
+  archiveTransitionFor,
+  EMPTY_PROJECTION_SNAPSHOT,
+} from './history-compact-test-fixtures.js';
+import type { LoadedModelProjectionTransitions } from '../model-projection-transition-ledger.js';
 import type { ContextBudgetDiagnostic } from '@maka/core/usage-stats/types';
 import { HistoryCompactSummarizerError } from '../history-compact-error.js';
 import { buildLlmHistorySummarizer } from '../history-compact-summarizer.js';
@@ -173,6 +178,12 @@ interface MidTurnFixtureOptions {
   systemPromptChars?: number;
   /** An always-active tool whose schema dominates the request payload. */
   bigActiveTool?: boolean;
+  /**
+   * Replace the transition-ledger read. Evaluated on every load, so a test can
+   * return a record only once some later fact (e.g. a recorded checkpoint)
+   * exists — that is how a transition committed mid-send is modeled.
+   */
+  loadTransitions?: () => Promise<LoadedModelProjectionTransitions>;
   /** Enable and capture automatic Memory extraction without allowing it to settle. */
   captureMemoryExtraction?: boolean;
   memoryGate?:
@@ -642,6 +653,7 @@ function buildFixture(options: MidTurnFixtureOptions = {}): MidTurnFixture {
       if (options.record) return options.record(checkpoint);
       recorded.push(checkpoint);
     },
+    ...(options.loadTransitions ? { loadModelProjectionTransitions: options.loadTransitions } : {}),
     loadTurnRuntimeEvents: async (turnId) => {
       fixture.ledgerReads += 1;
       // Emulate the durable read: let the event consumer's pending microtask
@@ -970,10 +982,11 @@ function defineMidTurnSuite(consumer: ConsumerMode): void {
   });
 
   test('sends an over-window request no shaper could rescue, rather than ending the turn', async () => {
-    // No prior turns and a window the first step's usage already exceeds: the
-    // pool is [anchor, one open call/result pair], so no safe completed span
-    // and nothing to compact. Only the provider can say whether that request
-    // fits, so it goes out and the turn runs to its own end.
+    // No prior turns and a window the first step's usage already exceeds: at
+    // that step the pool is [anchor, one completed call/result pair], which
+    // mid-turn coverage cannot fold. Only the provider can say whether that
+    // request fits, so it goes out and the turn runs to its own end. The miss
+    // is per-step — the grown pool may still fold a later request (#5790).
     const fixture = buildFixture({
       contextWindow: 120,
       withoutPriorTurns: true,
@@ -1107,6 +1120,55 @@ function defineMidTurnSuite(consumer: ConsumerMode): void {
     assert.equal(failedOpen[0]?.failOpenReason, 'provider_error');
   });
 
+  test('bounds an input-too-large rejection across later steps in the same turn (#5790 review)', async () => {
+    // No invocation proves a boundary, so the rejection is a plain summarizer
+    // failure and the Turn latches it — a later step never re-dispatches it.
+    const fixture = buildFixture({
+      toolSteps: 3,
+      summarize: () => {
+        throw new HistoryCompactSummarizerError('input_too_large');
+      },
+    });
+
+    await runFixtureTurn(fixture, consumer);
+
+    assert.equal(fixture.summarizerCalls, 1);
+    assert.equal(fixture.recorded.length, 0);
+    const failedOpen = compactionDecisions(fixture).filter(
+      (decision) => decision.decision === 'failedOpen',
+    );
+    assert.equal(failedOpen[0]?.failOpenReason, 'input_too_large');
+  });
+
+  test('a no_safe_completed_span attempt does not suppress the fold once the pool grows (#5790)', async () => {
+    // No prior turns: at the first trigger the pool is only the anchor plus
+    // one completed tool pair, which mid-turn coverage cannot fold (the anchor
+    // alone saves nothing). The attempt fails open WITHOUT calling the
+    // summarizer — a property of the pool at that step, not a failure — so it
+    // must not latch the turn. Once the next step lands a second pair the new
+    // attempt re-reads the grown ledger and folds.
+    const fixture = buildFixture({
+      contextWindow: 150,
+      withoutPriorTurns: true,
+      toolSteps: 2,
+    });
+    await runFixtureTurn(fixture, consumer);
+
+    const complete = fixture.events.find((event) => event.type === 'complete');
+    assert.equal(complete?.type === 'complete' ? complete.stopReason : undefined, 'end_turn');
+    const failedOpen = compactionDecisions(fixture).find(
+      (decision) => decision.decision === 'failedOpen',
+    );
+    assert.equal(failedOpen?.failOpenReason, 'no_safe_completed_span');
+    // The grown pool folded: exactly one summarizer call, one checkpoint.
+    assert.equal(fixture.summarizerCalls, 1);
+    assert.equal(fixture.recorded.length, 1);
+    const thirdPrompt = promptJson(fixture, 2);
+    assert.match(thirdPrompt, /maka_history_compact_checkpoint/);
+    assert.equal(thirdPrompt.includes('RAW_SPAN_ONE_'), false);
+    assert.equal(thirdPrompt.includes('RAW_SPAN_TWO_'), true);
+  });
+
   test('fails closed before provider dispatch when the durable ledger read fails', async () => {
     const fixture = buildFixture();
     // Break the seam after construction: every trigger read now rejects.
@@ -1144,6 +1206,56 @@ function defineMidTurnSuite(consumer: ConsumerMode): void {
     assert.equal(thirdPrompt.includes('RAW_SPAN_TWO_'), false);
     assert.match(thirdPrompt, /artifact-archived-1/);
     assert.match(thirdPrompt, /tool_result_pruned/);
+  });
+
+  test('a covered-span transition committed after the fold drops the mid-turn block', async () => {
+    // The durable turn projection re-validates the checkpoint it replays
+    // against the SAME transition snapshot the rest of the request was built
+    // from. A record committed after the fold rewrites the covered span's
+    // effective view without touching the raw ledger, so the request after it
+    // must replay the effective events WITHOUT the stale block — its summary
+    // still quotes the removed body (#4845 review).
+    let coveredResult: RuntimeEvent | undefined;
+    const fixture = buildFixture({
+      // Three tool steps so one more request is projected after the fold.
+      toolSteps: 3,
+      // Keep the post-fold baseline inside the window so the last step does
+      // not fold again and re-mask the drift check.
+      usageByCall: { 3: { input: 60, output: 10 } },
+      loadTransitions: async () => {
+        // The record exists only once the checkpoint does: committed after
+        // the fold whose digest it invalidates.
+        const checkpoint = fixture.recorded[0];
+        if (!checkpoint) {
+          return EMPTY_PROJECTION_SNAPSHOT;
+        }
+        coveredResult ??= fixture.ledger.find(
+          (event) => event.content?.kind === 'function_response',
+        );
+        return {
+          ...EMPTY_PROJECTION_SNAPSHOT,
+          transitions: [archiveTransitionFor(coveredResult!, 'POST_FOLD_TRANSITIONED_RESULT')],
+        };
+      },
+    });
+    await runFixtureTurn(fixture, consumer);
+
+    assert.equal(fixture.model.doStreamCalls.length, 4);
+    // The fold ran once — during the third request's shaping — and persisted
+    // its checkpoint before the transition landed.
+    assert.equal(fixture.recorded.length, 1);
+    assert.match(promptJson(fixture, 2), /MID_TURN_SUMMARY_SENTINEL/);
+    assert.ok(coveredResult);
+    const fourthPrompt = promptJson(fixture, 3);
+    // The next durable projection judged the checkpoint against the same
+    // snapshot the request was built from: stale block dropped, raw body the
+    // transition removed stays removed, the verbatim anchor and uncovered tail
+    // replay from the effective view.
+    assert.equal(fourthPrompt.includes('maka_history_compact_checkpoint'), false);
+    assert.equal(fourthPrompt.includes('MID_TURN_SUMMARY_SENTINEL'), false);
+    assert.equal(fourthPrompt.includes('RAW_SPAN_ONE_'), false);
+    assert.match(fourthPrompt, /POST_FOLD_TRANSITIONED_RESULT/);
+    assert.equal(fourthPrompt.includes(ANCHOR_TEXT), true);
   });
 
   test('compacts at most once per step, and again once a step is accepted', async () => {
@@ -1808,9 +1920,10 @@ describe('the shipped runtime default drives the proactive long-turn journey (is
     assert.equal(fixture.events.find((event) => event.type === 'complete')?.stopReason, 'end_turn');
   });
 
-  test('an unrescuable turn under the shipped default still dispatches', async () => {
-    // No prior turns leaves no safe completed span. The request still goes out
-    // because only the provider can decide whether it fits.
+  test('a first trigger with nothing foldable still dispatches under the shipped default', async () => {
+    // No prior turns leaves the first trigger no safe completed span. The
+    // request still goes out because only the provider can decide whether it
+    // fits — and the per-step miss does not latch the turn (#5790).
     const fixture = buildFixture({
       useRuntimeDefaultPolicy: true,
       contextWindow: 120,
