@@ -768,6 +768,23 @@ export function useMakaClientSlotOccupied(
   return (core?.activeEntries(name).length ?? 0) > 0;
 }
 
+/** Subscribe once to a keyed Slot, then query contributions for each row. */
+export function useMakaClientSlotOccupiedKeys(
+  name: {
+    [Name in keyof MakaClientSlotMap]: MakaClientSlotMap[Name]['kind'] extends 'keyed' ? Name : never;
+  }[keyof MakaClientSlotMap] & string,
+): ReadonlySet<string> {
+  const core = useContext(MakaClientSlotHostContext)?.core;
+  useSyncExternalStore(
+    (listener) => core?.subscribe(name, listener) ?? (() => {}),
+    () => core?.getVersion(name) ?? 0,
+    () => core?.getVersion(name) ?? 0,
+  );
+  return new Set(core?.activeEntries(name).flatMap((entry) =>
+    entry.options.key === undefined ? [] : [entry.options.key],
+  ));
+}
+
 export function MakaClientSlotProvider(props: {
   readonly core: MakaClientSlotCore;
   readonly children?: ReactNode;
