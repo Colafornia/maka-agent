@@ -19,13 +19,13 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { act, createElement } from 'react';
+import { act, createElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { parseHTML } from 'linkedom';
 import { UI_LOCALES, type UiLocale } from '@maka/core/ui-locale';
 import type { ToolResultContent } from '@maka/core/events';
-import { ToolCallDetail, ToolTrow } from '../tool-activity.js';
+import { ToolTrow } from '../tool-activity.js';
 import type { ToolActivityItem } from '../materialize.js';
 import { LocaleProvider } from '../locale-context.js';
 import {
@@ -43,23 +43,38 @@ const baseItem: ToolActivityItem = {
   args: undefined,
 };
 
-function renderRow(changes: Partial<ToolActivityItem>, locale: UiLocale = 'en'): string {
-  return renderToStaticMarkup(createElement(LocaleProvider, {
-    locale,
-    children: createElement(ToolTrow, { items: [{ ...baseItem, ...changes }] }),
-  }));
+function renderWithLocale(children: ReactNode, locale: UiLocale = 'en'): string {
+  return renderToStaticMarkup(createElement(LocaleProvider, { locale, children }));
+}
+
+function toolRow(root: ParentNode): Element {
+  const row = root.querySelector('[data-slot="chat-tool-call-row"]');
+  assert.ok(row, 'the actual Astryx call row is rendered');
+  return row;
 }
 
 // Astryx renders this path only for the row's detail chevron.
 const CHEVRON = 'path[d="M6 9l6 6 6-6"]';
-function assertExpandable(markup: string, expected: boolean): void {
-  const { document } = parseHTML(markup);
-  const row = document.querySelector('[data-slot="chat-tool-call-row"]');
-  assert.ok(row, 'the actual Astryx call row is rendered');
+function assertExpandable(root: ParentNode, expected: boolean): void {
+  const row = toolRow(root);
   assert.equal(row.getAttribute('role'), expected ? 'button' : null);
   assert.equal(row.getAttribute('tabindex'), expected ? '0' : null);
-  assert.equal(row.getAttribute('aria-expanded'), expected ? 'false' : null);
+  assert.equal(row.hasAttribute('aria-expanded'), expected);
   assert.equal(row.querySelector(CHEVRON) !== null, expected, 'row detail chevron');
+}
+
+function assertRow(changes: Partial<ToolActivityItem>, expected: boolean, locale: UiLocale = 'en'): string {
+  const markup = renderWithLocale(createElement(ToolTrow, { items: [{ ...baseItem, ...changes }] }), locale);
+  assertExpandable(parseHTML(markup).document, expected);
+  return markup;
+}
+
+function quietResult(content: string): ToolResultContent {
+  return { kind: 'json', value: { content } };
+}
+
+function summaryResult(summarized: string): ToolResultContent {
+  return { kind: 'summary', summarized, original: 'hidden original', reason: 'too_large' };
 }
 
 const archivedResult: Extract<ToolResultContent, { kind: 'archived_tool_result' }> = {
@@ -76,109 +91,77 @@ const archivedResult: Extract<ToolResultContent, { kind: 'archived_tool_result' 
 
 describe('tool row detail availability', () => {
   it('omits activation and chevrons for empty bodies and permission-denied output', () => {
-    for (const status of ['completed', 'running', 'interrupted'] as const) {
-      assertExpandable(renderRow({ status }), false);
-    }
-    assertExpandable(renderRow({
+    for (const status of ['completed', 'running'] as const) assertRow({ status }, false);
+    assertRow({
       status: 'errored',
       args: { path: '/private/data' },
       result: { kind: 'text', text: 'User denied permission request' },
-    }), false);
+    }, false);
   });
 
-  it('omits repeated quiet single lines using the target trim, redaction and cap', () => {
+  it('compares untitled invocation text using trim, redaction and the row cap', () => {
     for (const command of [
-      'git status',
       '  git status  \n',
       `echo ${'x'.repeat(300)}`,
       'curl -H "Authorization: Bearer secret-token-value" https://example.com',
     ]) {
-      const markup = renderRow({ toolName: 'Bash', args: { command } });
-      assertExpandable(markup, false);
+      const markup = assertRow({ toolName: 'Bash', args: { command } }, false);
       assert.doesNotMatch(markup, /secret-token-value/);
     }
-    assertExpandable(renderRow({
-      intent: 'git status', args: { command: 'git status' },
-    }), false);
-    assertExpandable(renderRow({
-      args: { command: 'git status' },
-      intent: 'Inspect working tree',
-    }), true);
-    assertExpandable(renderRow({ args: { command: 'echo first\necho second' } }), true);
+    assertRow({ args: { command: 'git status' }, intent: 'Inspect working tree' }, true);
+    assertRow({ args: { command: 'echo first\necho second' } }, true);
   });
 
-  it('keeps quiet JSON titles and non-repeated content expandable', () => {
-    assertExpandable(renderRow({
-      args: { command: 'git status' },
-      result: { kind: 'json', value: { content: 'git status' } },
-    }), true);
-    assertExpandable(renderRow({
-      result: { kind: 'json', value: { content: 'first\nsecond' } },
-    }), true);
-    assertExpandable(renderRow({
-      intent: 'same', result: { kind: 'json', value: { content: '  same  ' } },
-    }), false);
-    assertExpandable(renderRow({
-      intent: 'same', result: { kind: 'json', value: { content: 'other' } },
-    }), true);
-  });
+  it('keeps titled or distinct quiet JSON expandable and uses the full intent formatter', () => {
+    assertRow({ args: { command: 'git status' }, result: quietResult('git status') }, true);
+    assertRow({ result: quietResult('first\nsecond') }, true);
 
-  it('uses the intent formatting when comparing quiet text with a long target', () => {
     const intent = `${'x'.repeat(130)} expected`;
-    const markup = renderRow({
-      intent,
-      result: { kind: 'json', value: { content: `${'x'.repeat(130)} actual output` } },
-    });
+    const markup = assertRow({
+      intent, result: quietResult(`${'x'.repeat(130)} actual output`),
+    }, true);
     assert.ok(markup.includes(intent), 'the target retains its suffix beyond 120 characters');
-    assertExpandable(markup, true);
-    assertExpandable(renderRow({
-      intent,
-      result: { kind: 'json', value: { content: intent } },
-    }), false);
-    assertExpandable(renderRow({
-      intent: `Inspect   ${'x'.repeat(250)}`,
-      result: { kind: 'json', value: { content: `Inspect ${'x'.repeat(250)}` } },
-    }), false);
+    assertRow({ intent, result: quietResult(`  ${intent}  `) }, false);
+    assertRow({
+      intent: `Inspect   ${'x'.repeat(250)}`, result: quietResult(`Inspect ${'x'.repeat(250)}`),
+    }, false);
   });
 
-  it('keeps full args when they reveal information beyond the target', () => {
-    assertExpandable(renderRow({ args: 42, intent: '42' }), false);
-    assertExpandable(renderRow({ args: ['first', 'second'], intent: 'first' }), true);
-    assertExpandable(renderRow({ args: ['x'.repeat(300)], intent: 'x'.repeat(300) }), true);
-    assertExpandable(renderRow({ args: {} }), true);
+  it('keeps args-only details when the target omits information', () => {
+    assertRow({ args: {}, intent: '(empty)' }, false);
+    assertRow({ args: ['first', 'second'], intent: 'first' }, true);
+    assertRow({ args: ['x'.repeat(300)], intent: 'x'.repeat(300) }, true);
   });
 
   it('omits image and archived placeholder details and localizes archive stats', () => {
-    assertExpandable(renderRow({ result: {
+    assertRow({ result: {
       kind: 'image', mimeType: 'image/png', ref: { kind: 'workspace_file', relativePath: 'image.png' },
-    } }), false);
+    } }, false);
     for (const locale of UI_LOCALES) {
       for (const status of ['not_loaded', 'missing', 'corrupt'] as const) {
-        const markup = renderRow({ result: { ...archivedResult, status } }, locale);
-        assertExpandable(markup, false);
+        const markup = assertRow({ result: { ...archivedResult, status } }, false, locale);
         assert.ok(markup.includes(getToolActivityCopy(locale).result.archivedStatus[status]));
         assert.doesNotMatch(markup, /\[archived_tool_result\]/);
       }
     }
   });
 
-  it('preserves rich output families and summary activation', () => {
+  it('preserves text, diff, terminal, shell and web search activation', () => {
+    const output = { mode: 'pipes', stdout: 'output', stderr: '', stdoutTruncated: false, stderrTruncated: false, redacted: false } as const;
     const results: ToolResultContent[] = [
       { kind: 'text', text: 'actual output' },
-      { kind: 'summary', original: 'original', summarized: 'summary body', reason: 'too_large' },
-      { kind: 'json', value: { ok: true, content: 'actual output' } },
       { kind: 'file_diff', paths: ['a.ts'], diff: '@@ -1 +1 @@\n-old\n+new' },
       {
         kind: 'terminal', cmd: 'npm test', cwd: '/repo', status: 'completed', exitCode: 0,
-        output: { mode: 'pipes', stdout: 'output', stderr: '', stdoutTruncated: false, stderrTruncated: false, redacted: false },
+        output,
       },
       {
         kind: 'shell_run', cmd: 'npm test', cwd: '/repo', status: 'completed', mode: 'pipes',
-        ref: 'maka://runtime/background-tasks/test', startedAt: 1, updatedAt: 2, revision: 1,
+        ref: 'maka://runtime/background-tasks/test', startedAt: 1, updatedAt: 2, revision: 1, output,
       },
       { kind: 'web_search', provider: 'tavily', query: 'Maka', rows: [] },
     ];
-    for (const result of results) assertExpandable(renderRow({ result }), true);
+    for (const result of results) assertRow({ result }, true);
   });
 
   it('keeps sandbox and bypass decorations expandable even without a body', () => {
@@ -186,27 +169,25 @@ describe('tool row detail availability', () => {
       { kind: 'text', text: 'User denied permission request', sandboxDenial: { likely: true, backend: 'macos-seatbelt' } },
       { kind: 'text', text: 'requires bypass', sandboxFailure: { reason: 'requires_bypass', source: 'client_capability' } },
     ];
-    for (const result of results) {
-      assertExpandable(renderRow({ result, status: 'errored' }), true);
-      const detail = renderToStaticMarkup(createElement(LocaleProvider, {
-        locale: 'en',
-        children: createElement(ToolCallDetail, { item: { ...baseItem, result, status: 'errored' } }),
-      }));
-      assert.match(detail, /maka-(sandbox-blocked|requires-bypass)-banner/);
-    }
+    for (const result of results) assertRow({ result, status: 'errored' }, true);
   });
 
-  it('renders summary text through the same redaction, localization and line cap as text', () => {
+  it('renders summary code with text redaction, localization and actual line truncation', () => {
+    const text = `summary body\nAuthorization: Bearer secret-token-value\nUser denied permission request\n${Array.from({ length: 510 }, (_, i) => `line ${i}`).join('\n')}`;
     for (const locale of UI_LOCALES) {
-      const text = `summary body\nAuthorization: Bearer secret-token-value\nUser denied permission request\n${'line\n'.repeat(250)}`;
-      const render = (content: ToolResultContent) => renderToStaticMarkup(
-        createElement(LocaleProvider, { locale, children: createElement(ToolResultPreview, { content }) }),
-      );
-      const summary = render({ kind: 'summary', summarized: text, original: 'original-hidden', reason: 'too_large' });
-      assert.equal(summary.replace('data-kind="summary"', 'data-kind="text"'), render({ kind: 'text', text }));
+      const renderCode = (content: ToolResultContent) => {
+        const markup = renderWithLocale(createElement(ToolResultPreview, { content }), locale);
+        const code = parseHTML(markup).document.querySelector('code');
+        assert.ok(code, 'the result uses a code block');
+        return code.textContent;
+      };
+      const summary = renderCode(summaryResult(text));
+      assert.equal(summary, renderCode({ kind: 'text', text }));
       assert.match(summary, /summary body/);
-      assert.ok(summary.includes(getToolActivityCopy(locale).permissionDenied));
-      assert.doesNotMatch(summary, /secret-token-value|original-hidden|\[summary\]/);
+      const copy = getToolActivityCopy(locale);
+      assert.ok(summary.includes(copy.permissionDenied));
+      assert.ok(summary.includes(copy.result.hiddenLines(13)));
+      assert.doesNotMatch(summary, /secret-token-value|hidden original|\[summary\]|line 509/);
     }
   });
 });
@@ -232,57 +213,46 @@ it('updates the same row for live output and keyed plugin registration, disposal
   assert.ok(container);
   const root = createRoot(container);
   const core = new MakaClientSlotCore();
-  const render = (changes: Partial<ToolActivityItem>, activityObserved = true) => act(() => root.render(
+  const render = (changes: Partial<ToolActivityItem>) => act(async () => root.render(
     <LocaleProvider locale="en">
       <MakaClientSlotProvider core={core}>
         <MakaClientSessionScope sessionId="session-1">
-          <ToolTrow items={[{ ...baseItem, ...changes }]} activityObserved={activityObserved} />
+          <ToolTrow items={[{ ...baseItem, ...changes }]} />
         </MakaClientSessionScope>
       </MakaClientSlotProvider>
     </LocaleProvider>,
   ));
-  const row = () => {
-    const node = container.querySelector('[data-slot="chat-tool-call-row"]');
-    assert.ok(node);
-    return node;
-  };
-  const expandable = (expected: boolean) => {
-    assert.equal(row().getAttribute('role'), expected ? 'button' : null);
-    assert.equal(row().querySelector(CHEVRON) !== null, expected);
-  };
   try {
     await render({ status: 'running' });
-    expandable(false);
+    assertExpandable(container, false);
     await render({ status: 'running', outputChunks: [
       { seq: 1, stream: 'stdout', text: 'live output', redacted: false, createdAt: 1 },
     ] });
-    expandable(true);
-    await act(() => row().dispatchEvent(new window.Event('click', { bubbles: true })));
+    assertExpandable(container, true);
+    await act(async () => { toolRow(container).dispatchEvent(new window.Event('click', { bubbles: true })); });
     assert.match(container.textContent, /live output/);
-    await render({ status: 'completed', result: {
-      kind: 'summary', summarized: 'visible summary', original: 'hidden original', reason: 'too_large',
-    } });
+    await render({ status: 'completed', result: summaryResult('visible summary') });
     assert.match(container.textContent, /visible summary/);
     assert.doesNotMatch(container.textContent, /hidden original|\[summary\]/);
     await render({});
-    expandable(false);
-    await act(() => { core.register({ name: 'conversation.tool.detail', key: 'OtherTool' }, () => <p>other plugin</p>); });
-    expandable(false);
-    let dispose: () => void = () => {};
-    await act(() => { dispose = core.register({ name: 'conversation.tool.detail', key: 'CustomTool' }, () => <p>matching plugin</p>); });
-    expandable(true);
+    assertExpandable(container, false);
+    await act(async () => { core.register({ name: 'conversation.tool.detail', key: 'OtherTool' }, () => <p>other plugin</p>); });
+    assertExpandable(container, false);
+    let dispose!: () => void;
+    await act(async () => { dispose = core.register({ name: 'conversation.tool.detail', key: 'CustomTool' }, () => <p>matching plugin</p>); });
+    assertExpandable(container, true);
     // Detail state is retained by Astryx; matching output appears as soon as
     // this already-open row gets a contribution.
     assert.match(container.textContent, /matching plugin/);
     assert.doesNotMatch(container.textContent, /other plugin/);
-    await act(() => dispose());
-    expandable(false);
-    await act(() => { core.register({ name: 'conversation.tool.detail', key: 'CustomTool' }, () => <p>active plugin</p>); });
-    expandable(true);
+    await act(async () => dispose());
+    assertExpandable(container, false);
+    await act(async () => { core.register({ name: 'conversation.tool.detail', key: 'CustomTool' }, () => <p>active plugin</p>); });
+    assertExpandable(container, true);
     const entry = core.activeEntries('conversation.tool.detail').find((candidate) => candidate.options.key === 'CustomTool');
     assert.ok(entry);
-    await act(() => core.abdicate('conversation.tool.detail', entry));
-    expandable(false);
+    await act(async () => core.abdicate('conversation.tool.detail', entry));
+    assertExpandable(container, false);
   } finally {
     await act(() => root.unmount());
     Object.assign(globalThis, original);

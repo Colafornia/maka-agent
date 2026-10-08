@@ -350,7 +350,7 @@ function describeToolCall(
 function toolCallHasDetail(
   decision: DetailDecision,
   target: string | undefined,
-  formatTarget: (text: string) => string | undefined,
+  targetUsesIntent: boolean,
 ): boolean {
   if (decision.decorations.sandboxBlockedResult || decision.decorations.requiresBypass) return true;
   const { body } = decision;
@@ -360,7 +360,7 @@ function toolCallHasDetail(
     case 'quietText': {
       const text = body.body.trim();
       return Boolean(body.title) || /[\r\n]/.test(text)
-        || formatTarget(text) !== target;
+        || (targetUsesIntent ? formatToolIntent(text) : boundedToolTarget(text)) !== target;
     }
     case 'argsOnly':
       // Unlike a repeated invocation, full arguments can reveal information
@@ -667,7 +667,7 @@ function standardToolCall(
         : outcomeWord(item, locale),
     ...diffStats(itemDiffs(item)),
     resultDetail: hasDetailPlugin || toolCallHasDetail(
-      decision, target, item.intent ? formatToolIntent : boundedToolTarget,
+      decision, target, Boolean(item.intent),
     ) ? (
       <ToolDetailReveal>
         <ToolCallDetail
