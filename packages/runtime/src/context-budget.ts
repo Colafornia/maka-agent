@@ -47,7 +47,6 @@ export type {
 import type { ToolResultPrunePolicy } from './tool-result-archive.js';
 import {
   applyRuntimeEventHistoryCompact as applyRuntimeEventHistoryCompactNarrow,
-  isHistoryCompactContentEvent,
   type HistoryCompactionPolicy,
   type HistoryCompactionReplayResult,
 } from './history-compaction.js';
