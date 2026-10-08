@@ -347,7 +347,11 @@ function describeToolCall(
   return { decorations, body: { kind: 'none' } };
 }
 
-function toolCallHasDetail(decision: DetailDecision, target?: string): boolean {
+function toolCallHasDetail(
+  decision: DetailDecision,
+  target: string | undefined,
+  formatTarget: (text: string) => string | undefined,
+): boolean {
   if (decision.decorations.sandboxBlockedResult || decision.decorations.requiresBypass) return true;
   const { body } = decision;
   switch (body.kind) {
@@ -356,7 +360,7 @@ function toolCallHasDetail(decision: DetailDecision, target?: string): boolean {
     case 'quietText': {
       const text = body.body.trim();
       return Boolean(body.title) || /[\r\n]/.test(text)
-        || boundedToolTarget(text) !== (target === undefined ? undefined : boundedToolTarget(target));
+        || formatTarget(text) !== target;
     }
     case 'argsOnly':
       // Unlike a repeated invocation, full arguments can reveal information
@@ -662,7 +666,9 @@ function standardToolCall(
         ? getToolActivityCopy(locale).result.archivedStatus[item.result.status]
         : outcomeWord(item, locale),
     ...diffStats(itemDiffs(item)),
-    resultDetail: hasDetailPlugin || toolCallHasDetail(decision, target) ? (
+    resultDetail: hasDetailPlugin || toolCallHasDetail(
+      decision, target, item.intent ? formatToolIntent : boundedToolTarget,
+    ) ? (
       <ToolDetailReveal>
         <ToolCallDetail
           item={item}

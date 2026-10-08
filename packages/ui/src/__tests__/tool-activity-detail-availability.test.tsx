@@ -123,6 +123,24 @@ describe('tool row detail availability', () => {
     }), true);
   });
 
+  it('uses the intent formatting when comparing quiet text with a long target', () => {
+    const intent = `${'x'.repeat(130)} expected`;
+    const markup = renderRow({
+      intent,
+      result: { kind: 'json', value: { content: `${'x'.repeat(130)} actual output` } },
+    });
+    assert.ok(markup.includes(intent), 'the target retains its suffix beyond 120 characters');
+    assertExpandable(markup, true);
+    assertExpandable(renderRow({
+      intent,
+      result: { kind: 'json', value: { content: intent } },
+    }), false);
+    assertExpandable(renderRow({
+      intent: `Inspect   ${'x'.repeat(250)}`,
+      result: { kind: 'json', value: { content: `Inspect ${'x'.repeat(250)}` } },
+    }), false);
+  });
+
   it('keeps full args when they reveal information beyond the target', () => {
     assertExpandable(renderRow({ args: 42, intent: '42' }), false);
     assertExpandable(renderRow({ args: ['first', 'second'], intent: 'first' }), true);

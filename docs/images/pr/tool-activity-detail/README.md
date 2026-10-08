@@ -25,7 +25,7 @@ Tool rows previously always received a `resultDetail` element, so calls with no 
 
 The synchronous slot registry supports exact tool-name matching. `ToolTrow` subscribes once to the keyed `conversation.tool.detail` slot using its numeric version, then checks active keys for each row. Matching plugin contributions keep details expandable; unrelated, disposed and abdicated contributions do not.
 
-For `argsOnly`, the full trimmed body must equal the displayed target to omit details. Multiline or longer arguments remain expandable when the row omits part of their content. Quiet invocation text uses the row's shared first-line, trim and 120-character cap when comparing; existing intent formatting remains unchanged. Live output and sandbox/bypass decorations keep details available.
+For `argsOnly`, the full trimmed body must equal the displayed target to omit details. Multiline or longer arguments remain expandable when the row omits part of their content. Quiet text is compared directly with the displayed target after applying its source's formatter: `formatToolIntent` for intent (240-character cap), or `boundedToolTarget` for invocation (first line, trim and 120-character cap). The target is not truncated a second time. Live output and sandbox/bypass decorations keep details available.
 
 The screenshots render actual Maka/Astryx components with fixed fixtures and the built desktop stylesheet in Chromium. They are component evidence, not screenshots of a live provider session. Before uses the fetched `main` implementation (`5735554b6`); after uses this change. The summary row is expanded in both. The four placeholder/repeated rows lose their chevrons, and the terminal row retains its chevron.
 
@@ -35,9 +35,10 @@ The screenshots render actual Maka/Astryx components with fixed fixtures and the
 
 ## Verification
 
-- Relevant rendering and plugin suites: 42 passed, including 9 new regression tests.
-- Full UI suite: 698 passed.
-- New tests against the original implementation: 7 fail, 2 pass.
+- Relevant rendering and plugin suites: 43 passed, including 10 new regression tests.
+- Full UI suite: 699 passed.
+- Initial 9-test regression suite against the original implementation: 7 fail, 2 pass.
+- Intent comparison regression: the shared 130-character prefix with different suffixes failed before the review fix and passes after it. Repeated intent text, including whitespace normalization and the 240-character cap, remains non-expandable.
 - `npm run lint`, `npm run format:check`, `npm run build`, and `npm run typecheck`: passed.
 - `npx knip --workspace apps/desktop --workspace packages/ui`: passed.
 - `npm run check:locale-hygiene`: passed. The requested pnpm invocation was rejected by the repository's npm package-manager pin, so the same script was run with npm.
