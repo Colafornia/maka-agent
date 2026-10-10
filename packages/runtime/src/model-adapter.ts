@@ -124,8 +124,7 @@ export interface ModelAdapterStreamInput {
   messages: ModelMessage[];
   /**
    * Leading messages that later requests replay unchanged; the rest is
-   * request-only context. Anthropic automatic caching would otherwise place
-   * its breakpoint on that context, where no later request can read it.
+   * request-only context and never owns a prompt-cache breakpoint.
    */
   historyMessageCount?: number;
   tools: ModelToolSet;
@@ -1273,19 +1272,17 @@ function withAnthropicHistoryCacheBreakpoint(
   historyMessageCount: number | undefined,
   providerOptions: Record<string, unknown> | undefined,
 ): ModelMessage[] {
-  const anthropic = providerOptions?.anthropic as { cacheControl?: unknown } | undefined;
-  const cacheControl = anthropic?.cacheControl;
+  const cacheControl = (providerOptions?.anthropic as { cacheControl?: unknown } | undefined)
+    ?.cacheControl;
   if (
     cacheControl === undefined ||
     historyMessageCount === undefined ||
-    historyMessageCount <= 0 ||
     historyMessageCount >= messages.length
   ) {
     return messages;
   }
-  const breakpoint = historyMessageCount - 1;
   return messages.map((message, index) =>
-    index === breakpoint
+    index === historyMessageCount - 1
       ? ({
           ...message,
           providerOptions: {

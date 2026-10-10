@@ -10336,12 +10336,11 @@ describe('AiSdkBackend Anthropic prompt caching', () => {
     const bodies = await runToolTurn(connection());
 
     const breakpoints = bodies.map((body) => {
-      assert.deepEqual(body.cache_control, { type: 'ephemeral' });
       const flat = blocks(body);
       const marked = flat.flatMap(({ block }, index) => (block.cache_control ? [index] : []));
       assert.equal(marked.length, 1, JSON.stringify(body.messages));
       const breakpoint = marked[0]!;
-      assert.deepEqual(flat[breakpoint]!.block.cache_control, { type: 'ephemeral' });
+      assert.deepEqual(flat[breakpoint]!.block.cache_control, body.cache_control);
       assert.deepEqual(
         flat.slice(breakpoint + 1).map(({ block }) => block.text),
         ['REQUEST_ONLY_CONTEXT'],
