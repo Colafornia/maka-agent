@@ -122,6 +122,12 @@ export interface ModelAdapterInput {
 export interface ModelAdapterStreamInput {
   model: unknown;
   messages: ModelMessage[];
+  /**
+   * Leading messages that later requests replay unchanged; the rest is
+   * request-only context. Anthropic automatic caching would otherwise place
+   * its breakpoint on that context, where no later request can read it.
+   */
+  historyMessageCount?: number;
   tools: ModelToolSet;
   activeTools: string[];
   /** Observe each successfully pulled SDK stream part before semantic translation. */
@@ -337,8 +343,13 @@ export class ModelAdapter {
       sdkTools[TOOL_SEARCH_PROVIDER_NAME] = sdkTools[TOOL_SEARCH_NAME];
       delete sdkTools[TOOL_SEARCH_NAME];
     }
+    const messages = withAnthropicHistoryCacheBreakpoint(
+      input.messages,
+      input.historyMessageCount,
+      this.input.providerOptions,
+    );
     const fullMessages =
-      this.runtime.wire === 'openai-chat' ? lowerChatToolImages(input.messages) : input.messages;
+      this.runtime.wire === 'openai-chat' ? lowerChatToolImages(messages) : messages;
     const responsesLane =
       input.continuationKey && usesNativeOpenAiResponses(this.input.connection, this.runtime)
         ? input.continuationKey
@@ -1255,6 +1266,35 @@ function translateChunk(
     default:
       return [];
   }
+}
+
+function withAnthropicHistoryCacheBreakpoint(
+  messages: ModelMessage[],
+  historyMessageCount: number | undefined,
+  providerOptions: Record<string, unknown> | undefined,
+): ModelMessage[] {
+  const anthropic = providerOptions?.anthropic as { cacheControl?: unknown } | undefined;
+  const cacheControl = anthropic?.cacheControl;
+  if (
+    cacheControl === undefined ||
+    historyMessageCount === undefined ||
+    historyMessageCount <= 0 ||
+    historyMessageCount >= messages.length
+  ) {
+    return messages;
+  }
+  const breakpoint = historyMessageCount - 1;
+  return messages.map((message, index) =>
+    index === breakpoint
+      ? ({
+          ...message,
+          providerOptions: {
+            ...message.providerOptions,
+            anthropic: { ...message.providerOptions?.anthropic, cacheControl },
+          },
+        } as ModelMessage)
+      : message,
+  );
 }
 
 function lowerChatToolImages(messages: readonly ModelMessage[]): ModelMessage[] {
