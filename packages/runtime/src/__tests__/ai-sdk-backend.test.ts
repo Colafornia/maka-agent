@@ -10337,7 +10337,9 @@ describe('AiSdkBackend Anthropic prompt caching', () => {
 
     const breakpoints = bodies.map((body) => {
       const flat = blocks(body);
-      const marked = flat.flatMap(({ block }, index) => (block.cache_control ? [index] : []));
+      const marked = flat.flatMap(({ block }, index) =>
+        block.cache_control !== undefined ? [index] : [],
+      );
       assert.equal(marked.length, 1, JSON.stringify(body.messages));
       const breakpoint = marked[0]!;
       assert.deepEqual(flat[breakpoint]!.block.cache_control, body.cache_control);
@@ -10358,15 +10360,12 @@ describe('AiSdkBackend Anthropic prompt caching', () => {
 
   test('adds no cache breakpoint on Anthropic-protocol connections without automatic caching', async () => {
     const bodies = await runToolTurn({
+      ...connection(),
       slug: 'anthropic-relay',
       name: 'Anthropic Relay',
       providerType: 'custom',
       defaultApiProtocol: 'anthropic-messages',
       baseUrl: 'https://anthropic-relay.invalid',
-      defaultModel: 'claude-sonnet-4-5-20250929',
-      enabled: true,
-      createdAt: 1,
-      updatedAt: 1,
     });
 
     for (const body of bodies) {
