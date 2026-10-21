@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { readMatterRuntimeEvents } from '../assistant/proactive-matters/settlement-context.js';
 import { markAssistantBackgroundSessions } from '../assistant/background-sessions.js';
 import { PersonalAssistantService, ASSISTANT_LEGACY_PACKAGES } from '../assistant/service.js';
 import { createAssistantMessageReader } from './session-transcript-reader.js';
@@ -514,6 +515,12 @@ export async function createExecutionRuntimeHostComposition(
           });
         },
         markBackgroundSessions: (ids) => markAssistantBackgroundSessions(stores.sessionStore, ids),
+        readRuntimeEvents: async (sessionId, runId) =>
+          runId
+            ? readMatterRuntimeEvents(stores.runtimeEventStore, sessionId, runId)
+            : (await stores.runtimeEventStore.readSessionRuntimeEventEntries(sessionId)).map(
+                (entry) => entry.event,
+              ),
         agents: pluginAgents,
         llm: pluginLlm,
         sessionQuery: pluginSessionQuery,
@@ -1349,14 +1356,16 @@ export async function createExecutionRuntimeHostComposition(
         resolveRootTools: async (sessionId) => {
           await assertAssistantSessionEnabled(sessionId);
           return [
-            ...personalAssistant.tools,
+            ...personalAssistant.filterTools(sessionId, personalAssistant.tools),
             ...(sessionId === WORKHUB_COORDINATION_SESSION_ID && workHubResults && workHubInspection
               ? [workHubResults.tool, workHubInspection]
               : await requireGraphCoordinator(graphCoordinator).toolsForSession(sessionId)),
           ];
         },
-        resolvePluginTools: (sessionId, coreTools) =>
-          pluginTools.resolveContributions(sessionId, coreTools),
+        resolvePluginTools: (sessionId, coreTools) => {
+          const resolved = pluginTools.resolveContributions(sessionId, coreTools);
+          return { ...resolved, tools: personalAssistant.filterTools(sessionId, resolved.tools) };
+        },
         resolvePluginSystemPrompt: async (sessionId, promptContext, baseText) => {
           const assembly = await pluginSystemPrompt.assemble(
             {
