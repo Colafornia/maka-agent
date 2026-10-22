@@ -264,6 +264,11 @@ import { HostSessionRetirementCoordinator } from './session-retirement-coordinat
 import { HostStorageMaintenance } from './storage-maintenance.js';
 import { HostStorageUsageCoordinator } from './storage-usage-coordinator.js';
 import { HostArchiveRetentionCoordinator } from './archive-retention-coordinator.js';
+import {
+  createHostSessionCheckpointPublication,
+  type HostCheckpointPublicationOptions,
+} from './session-checkpoint-publication.js';
+import type { HostSessionCheckpointPublication } from './session-checkpoint-coordinator.js';
 import { HostSessionRevisionCoordinator } from './session-revision-coordinator.js';
 import { HostSessionEffectCoordinator } from './session-effect-coordinator.js';
 import { SessionContinuityCoordinator } from './session-continuity-coordinator.js';
@@ -309,6 +314,7 @@ import {
 } from './workspace-execution-composition.js';
 
 export interface ExecutionRuntimeHostComposition extends RuntimeHostComposition {
+  readonly sessionCheckpoints: HostSessionCheckpointPublication;
   readonly workspaceExecution: RuntimeHostWorkspaceExecutionComposition;
   readonly plugins: HostPluginPlatform;
 }
@@ -335,6 +341,8 @@ export interface CreateExecutionRuntimeHostCompositionOptions {
 }
 
 export interface ExecutionRuntimeHostCompositionDependencies {
+  /** Trusted deployment configuration, never supplied through Session settings. */
+  readonly checkpointPublication?: HostCheckpointPublicationOptions;
   readonly executionPersistenceProvider?: ExecutionPersistenceProvider;
   readonly primaryBackendFactory?: BackendFactory;
   readonly eventWaitSources?: HostGoalEventWaitSources;
@@ -397,6 +405,7 @@ export async function createExecutionRuntimeHostComposition(
   let invalidatePluginExecutorBackends: () => void = () => undefined;
   let modelMetadataRefresh: ReturnType<typeof startHostModelMetadataRefresh> | undefined;
   let archiveEvidence: Awaited<ReturnType<typeof openToolResultArchiveEvidenceReader>> | undefined;
+  let sessionCheckpoints: HostSessionCheckpointPublication | undefined;
   try {
     const pluginRoot = new Context();
     const pluginAgents = new PluginAgentService(pluginRoot);
@@ -1244,6 +1253,7 @@ export async function createExecutionRuntimeHostComposition(
     let domainModuleDrainBegun = false;
     const beginDrain = () => {
       draining = true;
+      sessionCheckpoints?.beginDrain();
       if (!domainModules || domainModuleDrainBegun) return;
       domainModuleDrainBegun = true;
       beginRuntimeHostDomainModuleDrain(domainModules);
@@ -3280,6 +3290,16 @@ export async function createExecutionRuntimeHostComposition(
       catalog: stores.sessionStore,
       retirement: sessionRetirement,
     });
+    sessionCheckpoints = await createHostSessionCheckpointPublication({
+      context,
+      stores,
+      admission: sessionAdmission,
+      manager: requireSessionManager(manager),
+      shellRuns: openedShellRunStore,
+      isSessionIdle: (sessionId) =>
+        rootRecoveryCompleted && !draining && coordinator.isSessionExecutionIdle(sessionId),
+      options: dependencies.checkpointPublication,
+    });
     const storageMaintenance = new HostStorageMaintenance({
       artifacts: openedArtifactStore,
       contextOffload: openedContextOffloadStore,
@@ -3723,6 +3743,11 @@ export async function createExecutionRuntimeHostComposition(
           errors.push(error);
         }
         try {
+          await sessionCheckpoints?.close();
+        } catch (error) {
+          errors.push(error);
+        }
+        try {
           await closeRuntimeHostDomainModules(domainModules);
         } catch (error) {
           errors.push(error);
@@ -3741,6 +3766,7 @@ export async function createExecutionRuntimeHostComposition(
     };
     return {
       handlers,
+      sessionCheckpoints,
       moduleIds: Object.freeze(domainModules.map(({ id }) => id)),
       workspaceExecution: requireWorkspaceExecution(workspaceExecution),
       plugins: pluginPlatform,
@@ -3821,6 +3847,11 @@ export async function createExecutionRuntimeHostComposition(
     };
   } catch (error) {
     const errors: unknown[] = [error];
+    try {
+      await sessionCheckpoints?.close();
+    } catch (closeError) {
+      errors.push(closeError);
+    }
     archiveEvidence?.close();
     try {
       await modelMetadataRefresh?.close();
