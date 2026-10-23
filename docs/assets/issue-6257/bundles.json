@@ -1,0 +1,14 @@
+[
+  {
+    "dir": "/tmp/maka-6257-vite-before",
+    "jsChunks": 143,
+    "rawBytes": 8978107,
+    "gzipBytes": 2435078
+  },
+  {
+    "dir": "apps/desktop/dist-renderer",
+    "jsChunks": 48,
+    "rawBytes": 6282238,
+    "gzipBytes": 1732078
+  }
+]

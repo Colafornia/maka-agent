@@ -267,7 +267,7 @@ export const exclusionRules = [
     id: 'binary-files',
     justification:
       'Binary image, video, and database content. There is no text position in these formats where a header could be added without corrupting the file.',
-    matches: hasExtension('.png', '.mp4', '.sqlite'),
+    matches: hasExtension('.gif', '.png', '.mp4', '.sqlite'),
   },
   {
     id: 'no-creative-content',

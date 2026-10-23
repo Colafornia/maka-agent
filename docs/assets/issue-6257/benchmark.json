@@ -1,0 +1,92 @@
+[
+  {
+    "renderer": "mermaid",
+    "version": "11.17.2",
+    "rendererGzipBytes": 959646,
+    "componentGzipBytes": 1143517,
+    "coldMs": {
+      "median": 296.5,
+      "min": 277.59999990463257,
+      "max": 441.7000000476837
+    },
+    "appMs": {
+      "median": 438.19999980926514,
+      "min": 423,
+      "max": 463
+    },
+    "successes": 5,
+    "failures": 0,
+    "samples": [
+      {
+        "coldMs": 298.90000009536743,
+        "svgChars": 156544,
+        "appMs": 437.59999990463257
+      },
+      {
+        "coldMs": 441.7000000476837,
+        "svgChars": 156544,
+        "appMs": 463
+      },
+      {
+        "coldMs": 296.5,
+        "svgChars": 156544,
+        "appMs": 444.5
+      },
+      {
+        "coldMs": 279.5,
+        "svgChars": 156544,
+        "appMs": 438.19999980926514
+      },
+      {
+        "coldMs": 277.59999990463257,
+        "svgChars": 156544,
+        "appMs": 423
+      }
+    ]
+  },
+  {
+    "renderer": "pele",
+    "version": "1.9.0",
+    "rendererGzipBytes": 263793,
+    "componentGzipBytes": 441713,
+    "coldMs": {
+      "median": 26.899999856948853,
+      "min": 26.40000009536743,
+      "max": 30.40000009536743
+    },
+    "appMs": {
+      "median": 132.79999995231628,
+      "min": 131.20000004768372,
+      "max": 137.10000014305115
+    },
+    "successes": 5,
+    "failures": 0,
+    "samples": [
+      {
+        "coldMs": 30.40000009536743,
+        "svgChars": 46459,
+        "appMs": 132.79999995231628
+      },
+      {
+        "coldMs": 28,
+        "svgChars": 46459,
+        "appMs": 137.10000014305115
+      },
+      {
+        "coldMs": 26.700000047683716,
+        "svgChars": 46459,
+        "appMs": 133.10000014305115
+      },
+      {
+        "coldMs": 26.899999856948853,
+        "svgChars": 46459,
+        "appMs": 132.20000004768372
+      },
+      {
+        "coldMs": 26.40000009536743,
+        "svgChars": 46459,
+        "appMs": 131.20000004768372
+      }
+    ]
+  }
+]
