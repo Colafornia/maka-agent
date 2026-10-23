@@ -29,6 +29,7 @@ Captured on 2026-10-23 using baseline `a509747d6` (Mermaid.js 11.17.2) and imple
 - Benchmark: `benchmark.json`, five alternating A/B runs per renderer in fresh pages, production esbuild bundles, 640 px container, 101 nodes and 100 edges with Chinese labels. The engine path includes script execution, initialization, and SVG rendering. The component path separately includes script execution, real Theme + MermaidDiagram mounting, SVG completion, and the next animation frame. Neither includes network transfer or full Electron startup. Every engine result must contain all 101 nodes and the final Chinese label; errors and timeouts fail the script.
 - Environment: macOS 26.3.1 arm64, 12 logical CPUs, Node 24.22.1, Playwright Chromium, no CPU throttling. Pre-run load averages: 4.18 / 6.29 / 6.13; other user applications were running. Results are local observations rather than universal speed guarantees.
 - Production output: `bundles.json` sums individually gzipped JS files from actual desktop Vite builds: 2,435,078 → 1,732,078 bytes, 143 → 48 chunks. This is total emitted JS, not initial download size. Temporary directory names identify the saved baseline build.
+- Independent engine profile: `profile.json` records 306 browser layout events for Mermaid and zero for Pele, using the same unchanged engine versions. This separate profiling run is excluded from the five-run timing results. Function sample counts are included; bundled third-party source excerpts are omitted.
 - Ablation: `ablation.md` records ten isolated variants, four removed mechanisms, five retained mechanisms with observed regressions, and the additional PNG font-pixel control. Full replay logs remain local; no performance gain is attributed to ablation itself.
 - Sources: the four `.md` files and `example-sources.md`. Visual examples adapt [Pele flowcharts](https://pele.run/examples/flowchart), [sequence diagrams](https://pele.run/examples/sequence), and [mindmaps](https://pele.run/examples/mindmap) with balanced Chinese labels. `visual-timings.json` and `frames.json` preserve the recording measurements.
 
@@ -48,6 +49,7 @@ Run `node --test packages/ui/scripts/mermaid.browser.test.mjs` for browser verif
 - 基准：`benchmark.json`，每个引擎五次，新页面交替 A/B，使用生产模式 esbuild 包、640 px 容器、101 节点及 100 连线中文输入。引擎路径包含脚本执行、初始化与 SVG 渲染；组件路径独立测量，包含脚本执行、真实 Theme + MermaidDiagram 挂载、SVG 完成与下一动画帧。均不包含网络传输或完整 Electron 启动。每次引擎输出必须包含全部 101 节点及最后的中文标签；错误或超时使脚本失败。
 - 环境：macOS 26.3.1 arm64、12 个逻辑核心、Node 24.22.1、Playwright Chromium，无 CPU 降速。测量前负载为 4.18 / 6.29 / 6.13，其他用户应用仍在运行。数据是本机观察结果，不代表所有环境下的性能保证。
 - 生产产物：`bundles.json` 对实际桌面 Vite 构建逐个压缩 JS 后求和：2,435,078 → 1,732,078 字节，143 → 48 个文件。这是全部生成的 JS，不是首屏下载量。临时目录名用于标识已保存的基线构建。
+- 独立引擎采样：`profile.json` 记录 Mermaid 触发 306 次浏览器布局、Pele 为零次，使用相同且未变更的引擎版本。该独立采样不计入五轮耗时结果。保留函数采样次数，省略打包后的第三方源码片段。
 - 消融：`ablation.md` 记录十组独立变体、四项已删除机制、五项因回归而保留的机制，以及额外的 PNG 字体像素对照。完整重放日志仍保留在本地；没有将任何性能提升归因于消融本身。
 - 来源：四个 `.md` 文件与 `example-sources.md`。视觉样例参考 [Pele 流程图](https://pele.run/examples/flowchart)、[时序图](https://pele.run/examples/sequence)及[思维导图](https://pele.run/examples/mindmap)，改为均衡的中文标签。`visual-timings.json` 与 `frames.json` 保留录制测量记录。
 

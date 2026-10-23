@@ -1,0 +1,162 @@
+[
+  {
+    "renderer": "mermaid",
+    "output": {
+      "chars": 155766,
+      "nodes": 101
+    },
+    "metrics": {
+      "LayoutCount": 306,
+      "RecalcStyleCount": 306,
+      "LayoutDuration": 0.027565,
+      "RecalcStyleDuration": 0.005475,
+      "DevToolsCommandDuration": 0.396052,
+      "ScriptDuration": 0.020978,
+      "V8CompileDuration": 0.040285,
+      "TaskDuration": 0.49122899999999997,
+      "TaskOtherDuration": 0.000874
+    },
+    "hot": [
+      {
+        "function": "(program)",
+        "url": "",
+        "samples": 160
+      },
+      {
+        "function": "(idle)",
+        "url": "",
+        "samples": 111
+      },
+      {
+        "function": "",
+        "url": "",
+        "samples": 33
+      },
+      {
+        "function": "Hie",
+        "url": "engine.js",
+        "samples": 23
+      },
+      {
+        "function": "",
+        "url": "engine.js",
+        "samples": 22
+      },
+      {
+        "function": "",
+        "url": "",
+        "samples": 16
+      },
+      {
+        "function": "",
+        "url": "",
+        "samples": 15
+      },
+      {
+        "function": "",
+        "url": "engine.js",
+        "samples": 12
+      },
+      {
+        "function": "(garbage collector)",
+        "url": "",
+        "samples": 6
+      },
+      {
+        "function": "",
+        "url": "engine.js",
+        "samples": 5
+      },
+      {
+        "function": "",
+        "url": "",
+        "samples": 5
+      },
+      {
+        "function": "",
+        "url": "engine.js",
+        "samples": 4
+      }
+    ]
+  },
+  {
+    "renderer": "pele",
+    "output": {
+      "chars": 46459,
+      "nodes": 101
+    },
+    "metrics": {
+      "LayoutCount": 0,
+      "RecalcStyleCount": 1,
+      "LayoutDuration": 0,
+      "RecalcStyleDuration": 0.000014,
+      "DevToolsCommandDuration": 0.089065,
+      "ScriptDuration": 0.00183,
+      "V8CompileDuration": 0.009933,
+      "TaskDuration": 0.101321,
+      "TaskOtherDuration": 0.00047900000000000004
+    },
+    "hot": [
+      {
+        "function": "(program)",
+        "url": "",
+        "samples": 53
+      },
+      {
+        "function": "(idle)",
+        "url": "",
+        "samples": 38
+      },
+      {
+        "function": "",
+        "url": "",
+        "samples": 9
+      },
+      {
+        "function": "width",
+        "url": "engine.js",
+        "samples": 7
+      },
+      {
+        "function": "sc",
+        "url": "engine.js",
+        "samples": 2
+      },
+      {
+        "function": "UtilityScript",
+        "url": "",
+        "samples": 1
+      },
+      {
+        "function": "parseEvaluationResultValue",
+        "url": "",
+        "samples": 1
+      },
+      {
+        "function": "",
+        "url": "engine.js",
+        "samples": 1
+      },
+      {
+        "function": "parse",
+        "url": "engine.js",
+        "samples": 1
+      },
+      {
+        "function": "destructLink",
+        "url": "engine.js",
+        "samples": 1
+      },
+      {
+        "function": "_k",
+        "url": "engine.js",
+        "samples": 1
+      },
+      {
+        "function": "Zm",
+        "url": "engine.js",
+        "samples": 1
+      }
+    ]
+  }
+]
