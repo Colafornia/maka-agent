@@ -16,21 +16,22 @@
   specific language governing permissions and limitations
   under the License.
 -->
-
 ```mermaid
 sequenceDiagram
   autonumber
-  actor C as 客户
-  participant W as 应用
-  participant A as 订单服务
-  participant B as 支付服务
-  C->>W: 提交订单
-  W->>A: 创建订单
-  activate A
-  A->>B: 支付授权
-  B-->>A: 授权成功
-  A-->>W: 订单确认
-  deactivate A
-  W-->>C: 完成下单
-  Note over C,B: 一个订单 · 一次交易
+  actor User
+  participant App as Desktop app
+  participant Host as Runtime Host
+  participant Bash as Bash tool
+  User->>App: Run the tests
+  App->>Host: Start turn
+  activate Host
+  Host-->>App: Allow npm test?
+  User->>App: Allow once
+  App->>Host: Permission granted
+  Host->>Bash: npm test
+  Bash-->>Host: 812 passed
+  Host-->>App: Turn ended
+  deactivate Host
+  Note over User,Bash: Each step is a RuntimeEvent in the log
 ```

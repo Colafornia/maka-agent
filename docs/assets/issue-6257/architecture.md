@@ -16,20 +16,21 @@
   specific language governing permissions and limitations
   under the License.
 -->
-
 ```mermaid
-mindmap
-  root((Maka))
-    理解需求
-      目标梳理
-      上下文检索
-    规划任务
-      拆解步骤
-      选择工具
-    执行工作
-      并行处理
-      进度反馈
-    交付结果
-      自动验证
-      成果整理
+flowchart LR
+  subgraph Clients
+    Desktop[Desktop app]
+    CLI[TUI and CLI]
+    Eval[Eval runner]
+  end
+  subgraph Host [Runtime Host]
+    Sessions[SessionManager] --> Run[AgentRun]
+    Run --> Tools[Tool runtime]
+  end
+  Desktop --> Sessions
+  CLI --> Sessions
+  Eval --> Sessions
+  Run --> Model[Model provider]
+  Run --> Log[(RuntimeEvent log)]
+  Tools --> Files[(Workspace)]
 ```

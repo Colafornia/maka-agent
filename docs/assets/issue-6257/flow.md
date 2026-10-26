@@ -16,17 +16,14 @@
   specific language governing permissions and limitations
   under the License.
 -->
-
 ```mermaid
 flowchart TD
-  A([接收任务]) --> B[解析需求]
-  A --> C[检索资料]
-  B --> D{汇总计划}
-  C --> D
-  D --> E[方案设计]
-  D --> F[功能实现]
-  D --> G[结果验证]
-  E --> H([完成交付])
-  F --> H
-  G --> H
+  A([User message]) --> B[Call model]
+  B --> C{Model output}
+  C -->|Final answer| D([Turn ends])
+  C -->|Read-only tool| E[Run tool]
+  C -->|Edit or shell| F{Ask user}
+  F -->|Allow| E
+  F -->|Deny| B
+  E -->|Tool result| B
 ```

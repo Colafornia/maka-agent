@@ -1,11 +1,11 @@
 {
   "nodes": 128,
   "edges": 260,
-  "sourceChars": 6153,
+  "sourceChars": 6481,
   "playback": "1x",
   "cpuThrottling": 1,
   "results": {
-    "0": 614.0999999046326,
-    "1": 120.70000004768372
+    "0": 613.5,
+    "1": 93.5
   }
 }
