@@ -26,6 +26,6 @@
 ## 模块结构
 
 - [`contract`](src/contract.rs)：严格的 `maka.eval.v1` 实验与结果投影契约、原生的 `maka.eval.v2` 正交尝试维度、仅记录运行条件的 `RunFingerprint` 及语义差异注册表。
-- [`measurement`](src/measurement.rs)：精确的 6 计数器 Token 核算（保留 `inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWriteTokens`、`reasoningTokens`、`totalTokens`，不重算求和）、`MeteringState` / `TokenBasis` 语义及标准 `DEEPSEEK_V4_FLASH_COST` 计价。
+- [`measurement`](src/measurement.rs)：精确的 6 计数器 Token 核算（保留 `inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWriteTokens`、`reasoningTokens`、`totalTokens`，不重算求和）、无篡改计量网关、准入截止边界、HMAC 鉴权检查点恢复、回执与代理日志去重对账及标准 `DEEPSEEK_V4_FLASH_COST` 计价。
 
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

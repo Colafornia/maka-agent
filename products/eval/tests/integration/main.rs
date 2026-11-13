@@ -18,4 +18,5 @@
  */
 
 mod contract;
+mod metering;
 mod support;
