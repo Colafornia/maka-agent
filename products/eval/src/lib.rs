@@ -21,3 +21,4 @@
 
 pub mod contract;
 pub mod measurement;
+pub mod store;

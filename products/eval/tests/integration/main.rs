@@ -18,4 +18,5 @@
  */
 
 mod contract;
+mod store;
 mod support;
