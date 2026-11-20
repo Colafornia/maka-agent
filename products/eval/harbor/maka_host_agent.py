@@ -18,14 +18,20 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shlex
 import tempfile
+import time
 from pathlib import Path
 
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+
+class MakaInfraError(RuntimeError):
+    """Non-retriable infrastructure/metering failure recorded without grading."""
 
 
 class MakaHostAgent(BaseAgent):
@@ -36,9 +42,12 @@ class MakaHostAgent(BaseAgent):
         self._api_key_env: str = kwargs.pop("api_key_env")
         self._provider: str = kwargs.pop("provider")
         self._model_id: str = kwargs.pop("model_id", None) or model_name or ""
+        self._thinking_level: str | None = kwargs.pop("thinking_level", None) or None
         self._sandbox_mode: str = kwargs.pop("sandbox_mode")
-        self._max_steps: int = int(kwargs.pop("max_steps"))
-        self._timeout_ms: int = int(kwargs.pop("timeout_ms"))
+        raw_max_steps = kwargs.pop("max_steps", None)
+        self._max_steps: int | None = int(raw_max_steps) if raw_max_steps is not None else None
+        raw_timeout_ms = kwargs.pop("timeout_ms", None)
+        self._timeout_ms: int | None = int(raw_timeout_ms) if raw_timeout_ms is not None else None
         if not self._model_id:
             raise ValueError("MakaHostAgent requires model_id or model_name")
         super().__init__(logs_dir, model_name=model_name, **kwargs)
@@ -53,10 +62,10 @@ class MakaHostAgent(BaseAgent):
     async def _resolve_uid_gid(self, environment: BaseEnvironment) -> tuple[str, str]:
         uid_res = await environment.exec("id -u && id -g")
         if uid_res.return_code != 0 or not uid_res.stdout:
-            raise RuntimeError(f"failed to resolve container uid/gid: {uid_res.stderr}")
+            raise MakaInfraError(f"failed to resolve container uid/gid: {uid_res.stderr}")
         parts = [line.strip() for line in uid_res.stdout.strip().splitlines() if line.strip()]
         if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
-            raise RuntimeError(f"unexpected uid/gid output: {uid_res.stdout!r}")
+            raise MakaInfraError(f"unexpected uid/gid output: {uid_res.stdout!r}")
         return parts[0], parts[1]
 
     async def setup(self, environment: BaseEnvironment) -> None:
@@ -66,7 +75,7 @@ class MakaHostAgent(BaseAgent):
             "&& test -x /opt/maka-agent/maka-eval"
         )
         if check.return_code != 0:
-            raise RuntimeError(
+            raise MakaInfraError(
                 "missing executable binaries under /opt/maka-agent: "
                 f"{check.stderr or check.stdout}"
             )
@@ -87,7 +96,26 @@ class MakaHostAgent(BaseAgent):
             user="root",
         )
         if prep_home.return_code != 0:
-            raise RuntimeError(f"failed preparing container home dir: {prep_home.stderr}")
+            raise MakaInfraError(f"failed preparing container home dir: {prep_home.stderr}")
+
+    async def _cleanup_request(
+        self, environment: BaseEnvironment, request_remote: str, q_req: str
+    ) -> None:
+        try:
+            res = await environment.exec(f"rm -f {q_req}", user="root")
+            if res.return_code != 0:
+                self.logger.warning(
+                    "failed removing temporary guest request %s (rc=%s): %s",
+                    request_remote,
+                    res.return_code,
+                    res.stderr or res.stdout,
+                )
+        except Exception as exc:
+            self.logger.warning(
+                "failed removing temporary guest request %s: %s",
+                request_remote,
+                exc,
+            )
 
     async def run(
         self,
@@ -96,15 +124,26 @@ class MakaHostAgent(BaseAgent):
         context: AgentContext,
     ) -> None:
         del context
+        run_started = time.monotonic()
         api_key = os.environ.get(self._api_key_env, "")
         if not api_key:
-            raise RuntimeError(
+            raise MakaInfraError(
                 f"environment variable '{self._api_key_env}' is unset or empty"
             )
 
         uid, gid = await self._resolve_uid_gid(environment)
         pwd_res = await environment.exec("pwd")
         workspace_dir = (pwd_res.stdout or "").strip() or "/app"
+
+        remaining_ms: int | None = None
+        if self._timeout_ms is not None:
+            elapsed_ms = round((time.monotonic() - run_started) * 1000)
+            remaining_ms = self._timeout_ms - elapsed_ms
+            if remaining_ms <= 0:
+                raise MakaInfraError(
+                    f"agent timeout budget ({self._timeout_ms} ms) exhausted before guest-run "
+                    f"started ({elapsed_ms} ms elapsed during setup)"
+                )
 
         maka_logs = self.logs_dir / "maka"
         maka_logs.mkdir(parents=True, exist_ok=True)
@@ -122,9 +161,10 @@ class MakaHostAgent(BaseAgent):
             "apiKey": api_key,
             "provider": self._provider,
             "modelId": self._model_id,
+            "thinkingLevel": self._thinking_level,
             "sandboxMode": self._sandbox_mode,
             "maxSteps": self._max_steps,
-            "timeoutMs": self._timeout_ms,
+            "timeoutMs": remaining_ms,
         }
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tmp:
@@ -142,18 +182,22 @@ class MakaHostAgent(BaseAgent):
                 user="root",
             )
             if prep_req.return_code != 0:
-                await environment.exec(f"rm -f {q_req}", user="root")
-                raise RuntimeError(
+                await self._cleanup_request(environment, request_remote, q_req)
+                raise MakaInfraError(
                     f"failed preparing guest request/log permissions: "
                     f"{prep_req.stderr or prep_req.stdout}"
                 )
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        exec_res = await environment.exec(
+        cmd = (
             f"/opt/maka-agent/maka-eval guest-run "
             f"--request-file {q_req} "
-            f"--result-file {shlex.quote(result_remote)}",
+            f"--result-file {shlex.quote(result_remote)}"
+        )
+
+        exec_res = await environment.exec(
+            cmd,
             env={
                 "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal",
                 "no_proxy": "localhost,127.0.0.1,::1,host.docker.internal",
@@ -165,11 +209,54 @@ class MakaHostAgent(BaseAgent):
             (maka_logs / "guest-run.stderr.log").write_text(exec_res.stderr)
 
         if exec_res.return_code != 0:
-            try:
-                await environment.exec(f"rm -f {q_req}", user="root")
-            except Exception:
-                pass
-            raise RuntimeError(
+            await self._cleanup_request(environment, request_remote, q_req)
+            raise MakaInfraError(
                 f"maka-eval guest-run exited with {exec_res.return_code}: "
                 f"{exec_res.stderr or exec_res.stdout}"
             )
+
+    def populate_context_post_run(self, context: AgentContext) -> None:
+        guest_path = self.logs_dir / "maka" / "guest-result.json"
+        try:
+            payload = json.loads(guest_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as exc:
+            self.logger.warning(
+                "failed reading guest-result.json at %s: %s", guest_path, exc
+            )
+            return
+        if not isinstance(payload, dict):
+            self.logger.warning(
+                "ignoring non-object guest-result.json at %s", guest_path
+            )
+            return
+        evidence = payload.get("evidence")
+        settlement = payload.get("settlement")
+        if evidence is None or settlement is None:
+            return
+        if not isinstance(evidence, dict) or not isinstance(settlement, dict):
+            self.logger.warning(
+                "ignoring malformed guest-result.json fields at %s", guest_path
+            )
+            return
+        try:
+            summary = evidence["hostUsage"]["summary"]
+            if summary["pending"]["models"] == 0:
+                models = summary["models"]
+                # Host input already includes cached tokens, matching Harbor's AgentContext contract.
+                if models["input"]["missing"] == 0:
+                    context.n_input_tokens = models["input"]["known"]
+                if models["cacheRead"]["missing"] == 0:
+                    context.n_cache_tokens = models["cacheRead"]["known"]
+                if models["output"]["missing"] == 0:
+                    context.n_output_tokens = models["output"]["known"]
+            if settlement["status"] == "complete" and settlement.get("costUsd") is not None:
+                cost = float(settlement["costUsd"])
+                if math.isfinite(cost):
+                    context.cost_usd = cost
+        except (KeyError, TypeError, ValueError) as exc:
+            self.logger.warning(
+                "failed populating AgentContext from %s: %s", guest_path, exc
+            )
+            return
